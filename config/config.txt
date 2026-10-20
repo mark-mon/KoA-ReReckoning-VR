@@ -1,0 +1,62 @@
+# Amalur VR configuration
+# Lines starting with # are comments. Restart the game after editing.
+
+# ---- General ----
+# 0=error 1=warn 2=info 3=debug 4=trace
+log_level = 2
+# 1 = enable VR (starts AmalurVR_XrHost.exe). 0 = mod loads but does nothing (diagnostics only)
+vr_enabled = 1
+
+# ---- Rendering ----
+# Per-eye render size. 0 = use the headset's recommended size.
+render_width = 0
+render_height = 0
+# Multiplier applied to the recommended size when render_width/height are 0
+render_scale = 1.0
+# Minimum width/height of the render. Headsets are ~0.9:1, which makes the game's UI (e.g. dialog) too narrow.
+# 1.333 = 4:3 (the extra width only adds horizontal detail; the 3D view still uses the headset FOV). 0 = off
+min_render_aspect = 1.333
+# 1 = render both eyes natively each frame (recommended). 0 = alternate-eye fallback
+stereo_native = 1
+# World scale: larger = world looks smaller. 1.0 = game units as authored
+world_scale = 1.0
+# Extra IPD multiplier on top of the headset IPD
+ipd_scale = 1.0
+# Near clip plane override in game units (0 = keep game value)
+near_clip = 0
+# Game units per meter (the engine uses centimeters)
+units_per_meter = 100
+# 1 = keep the horizon level (removes the game camera's pitch; your head still looks up/down). Recommended.
+camera_pitch_lock = 1
+# Override the game's own vertical FOV setting (10-80, 0 = leave). 80 reduces objects popping in at the edges of your view.
+game_fov_vertical = 80
+# Shrink the desktop window to fit the monitor (rendering resolution is unaffected)
+desktop_window_fit = 1
+
+# ---- HUD / UI ----
+# Distance of the HUD panel in meters, width in meters
+hud_distance = 1.6
+hud_width = 1.6
+# Vertical offset of the HUD panel in meters (negative = lower)
+hud_offset_y = -0.05
+# 1 = HUD follows head, 0 = HUD fixed in front of the recentered position
+hud_follow_head = 0
+# Menus / cutscene screens panel (shown instead of the world when the game is in a full-screen menu)
+menu_distance = 2.0
+menu_width = 2.4
+
+# ---- Controls ----
+# Recenter the view: hold the gamepad Back/View button + click the right stick
+recenter_on_start = 1
+
+# ---- Diagnostics ----
+# Press this key (or create a file named capture.now in the game folder) to capture one frame
+capture_key = 0x7A
+# Save render-target images during a capture (slower capture, much more useful)
+capture_dump_targets = 0
+# Save the per-eye and HUD images every N seconds to the AmalurVR folder (0 = off)
+debug_dump_interval = 0
+# Show a desktop mirror window of the left eye
+desktop_mirror = 1
+# Test automation only (presses A to load the last save). Leave at 0.
+autoload = 0

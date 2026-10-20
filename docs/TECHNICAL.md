@@ -1,0 +1,57 @@
+# How it works
+
+## Overview
+```
+koa.exe (32-bit, D3D11)                         AmalurVR_XrHost.exe (64-bit)
+ └ dinput8.dll (this mod)                        └ OpenXR session (D3D11)
+    • hooks D3D11/DXGI (MinHook inline)             • publishes predicted eye poses  ─┐
+    • renders the view twice per frame  ◄────────── shared memory (seqlock)           │
+    • copies L | R | HUD into a shared atlas ──────► keyed-mutex shared textures (x3)  │
+                                                    • submits projection + quad layers┘
+```
+The game loads `dinput8.dll` from its own folder (it forwards to the system DirectInput). Everything
+else is done in memory; no game files are modified except `personal.ini` (resolution/vsync).
+
+## Native stereo
+`RsSceneRenderController::RenderView` (RVA `0x91F280`) renders a complete view: shadows, G-buffer,
+lighting, post-processing, tonemap into the backbuffer, then the in-world overlays (`0x912B20`).
+The mod calls it twice per frame. Before each call the render-side camera (`a3[0]`, 0x360 bytes,
+Z-up, centimeters, row-vector matrices) is rewritten for the eye:
+
+| Offset | Field |
+|---|---|
+| +04 / +14 | position / look-at target |
+| +24 / +28 / +2C | near / far / horizontal FOV (deg) |
+| +44 | view matrix |
+| +C4 | projection (D3D left-handed, built from the OpenXR FOV tangents) |
+| +104 / +144 | view-projection (both copies) |
+| +184 / +190 | near-plane extents |
+| +19C / +1A8 / +1B4 | right / up / forward |
+| +1CC | 6 frustum planes (inward normals), +28C their absolute normals |
+
+### Pre-baked object constants
+Draw packets are built before `RenderView` with the game camera, and contain `worldViewProjection`
+(`g_dynamicbuffer`, offset 128). The packet executor copies them with `memcpy` at `0x89669A`; the mod
+redirects that call and, during an eye pass, replaces WVP with `world × VP(eye)` whenever it equals
+`world × VP(original)` (shadow passes use the light's matrix and are left alone).
+
+### Resolution
+The engine sizes its render targets from the screen size, so the mod spoofs `GetSystemMetrics` /
+`GetClientRect`, writes `personal.ini`, and forces the swapchain to the per-eye size.
+
+## HUD and menus
+After the second eye's scene is copied, the backbuffer is cleared to transparent and the overlays + UI
+draw onto it; their blend states are patched so alpha accumulates as coverage (premultiplied). The result
+is the HUD quad layer. Frames in which `RenderView` does not draw the world into the backbuffer (menus
+render a character preview off-screen) are submitted in *menu mode*: only a large opaque quad.
+
+## OpenXR host
+- Picks the runtime's GPU (`xrGetD3D11GraphicsRequirementsKHR`), creates swapchains in the RGBA8 family.
+- Each frame: `xrWaitFrame` → locate views → publish recentered poses → signal the game →
+  take the newest atlas slot (keyed mutex) → copy into swapchains → submit the projection layer with
+  the poses that slot was rendered with (correct reprojection) plus the HUD/menu quad.
+
+## Diagnostics
+F11 (or a `capture.now` file in the game folder) records one frame: `trace.txt` (all D3D calls with
+call-site RVAs and constant-buffer contents), shader disassembly, `atlas.dds`, and optionally every
+render target (`capture_dump_targets = 1`). `tools/dds2png.py` converts the dumps.

@@ -1,0 +1,42 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build 32-bit proxy (dinput8.dll)
+        run: |
+          cmake -B build32 -A Win32
+          cmake --build build32 --config Release
+
+      - name: Build 64-bit OpenXR host (AmalurVR_XrHost.exe)
+        run: |
+          cmake -B build64 -A x64
+          cmake --build build64 --config Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkg = "package"
+          New-Item -ItemType Directory $pkg | Out-Null
+          Copy-Item build32/Release/dinput8.dll $pkg/
+          Copy-Item build64/Release/AmalurVR_XrHost.exe $pkg/
+          Copy-Item config/config.txt $pkg/
+          Copy-Item README.md, LICENSE $pkg/
+          $name = if ($env:GITHUB_REF -like "refs/tags/*") { "KoA-ReReckoning-VR-$($env:GITHUB_REF_NAME).zip" } else { "KoA-ReReckoning-VR-dev.zip" }
+          Compress-Archive -Path "$pkg/*" -DestinationPath $name
+          "ZIP_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KoA-ReReckoning-VR
+          path: ${{ env.ZIP_NAME }}

@@ -1,0 +1,12 @@
+build*/
+out/
+dist/
+package/
+*.zip
+*.pdb
+*.ilk
+*.obj
+*.lib
+.vs/
+CMakeUserPresets.json
+__pycache__/
