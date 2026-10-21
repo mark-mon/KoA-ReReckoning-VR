@@ -33,7 +33,7 @@ mkdir -p build/x86 build/x64 dist
 cc x86 dist/dinput8.dll /arch:SSE2 /LD /Fobuild/x86/ \
   src/proxy/*.cpp src/proxy/vtbl.c src/common/log.cpp src/common/config.cpp \
   third_party/minhook/src/{buffer.c,hook.c,trampoline.c} third_party/minhook/src/hde/hde32.c \
-  /link /DEF:src/proxy/dinput8.def user32.lib dxgi.lib d3d11.lib dxguid.lib advapi32.lib
+  /link /DEF:src/proxy/proxy.def user32.lib dxgi.lib d3d11.lib dxguid.lib advapi32.lib
 cc x64 dist/AmalurVR_XrHost.exe /Fobuild/x64/ -DXR_USE_PLATFORM_WIN32 -DXR_USE_GRAPHICS_API_D3D11 /Ithird_party/openxr/include \
   src/xrhost/main.cpp src/common/log.cpp src/common/config.cpp \
   /link third_party/openxr/lib/openxr_loader_static.lib user32.lib d3d11.lib dxgi.lib dxguid.lib advapi32.lib \

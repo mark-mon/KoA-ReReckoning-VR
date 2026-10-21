@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+- The mod's DLL can be installed as `dinput8.dll` or `winmm.dll` (it detects its own name), for setups where
+  another mod already uses `dinput8.dll`.
+- Chainloading: `dinput8-2.dll` / `winmm-2.dll` are loaded automatically and our exports forward to them;
+  more DLLs via `chainload` in `config.txt`.
+- Only one copy of the mod runs if it is installed under both names.
+
 ## 0.1.0 — 2026-10-20
 First public release.
 - Native stereo rendering (two `RenderView` passes per frame) with per-eye OpenXR FOV and IPD.

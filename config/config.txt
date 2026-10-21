@@ -7,6 +7,12 @@ log_level = 2
 # 1 = enable VR (starts AmalurVR_XrHost.exe). 0 = mod loads but does nothing (diagnostics only)
 vr_enabled = 1
 
+# ---- Other mods ----
+# This DLL works as dinput8.dll or winmm.dll: rename it to winmm.dll if another mod already uses dinput8.dll.
+# chainload: other DLLs to load. auto = dinput8-2.dll (or winmm-2.dll) if present, so another mod's
+# dinput8.dll keeps working when renamed to dinput8-2.dll. Add more names separated by commas; none = off.
+chainload = auto
+
 # ---- Rendering ----
 # Per-eye render size. 0 = use the headset's recommended size.
 render_width = 0

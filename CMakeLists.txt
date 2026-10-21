@@ -23,8 +23,8 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
 
     add_library(dinput8 SHARED
         src/proxy/dllmain.cpp src/proxy/d3dhooks.cpp src/proxy/hookutil.cpp src/proxy/dds.cpp
-        src/proxy/game.cpp src/proxy/input.cpp src/proxy/watch.cpp src/proxy/stereo.cpp src/proxy/xrlink.cpp
-        src/proxy/vtbl.c src/proxy/dinput8.def ${COMMON_SRC})
+        src/proxy/game.cpp src/proxy/input.cpp src/proxy/watch.cpp src/proxy/stereo.cpp src/proxy/xrlink.cpp src/proxy/proxy.cpp
+        src/proxy/vtbl.c src/proxy/proxy.def ${COMMON_SRC})
     target_link_libraries(dinput8 PRIVATE minhook user32 dxgi d3d11 dxguid advapi32)
     target_compile_options(dinput8 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:SSE2>)
     set_target_properties(dinput8 PROPERTIES OUTPUT_NAME dinput8 PREFIX "")

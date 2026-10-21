@@ -27,6 +27,15 @@ floating panels.
 3. Start your OpenXR runtime (e.g. SteamVR) with the headset connected.
 4. Launch the game from Steam. The VR helper starts automatically.
 
+### Using it with other mods
+The mod's DLL works under two names: `dinput8.dll` or `winmm.dll` (it detects its own file name).
+- **Another mod already uses `dinput8.dll`?** Either rename ours to `winmm.dll`, or rename the other
+  mod's file to `dinput8-2.dll` and keep ours as `dinput8.dll`. Ours loads `dinput8-2.dll` automatically
+  and passes DirectInput through it, so the other mod keeps working.
+- Same idea for winmm: if ours is `winmm.dll`, another mod's `winmm.dll` can be renamed to `winmm-2.dll`.
+- More DLLs can be loaded with `chainload` in `config.txt` (comma-separated, `none` to disable).
+- Mods that also change the game's rendering, resolution or camera may conflict with VR.
+
 ### Controls
 | Action | Gamepad |
 |---|---|
@@ -35,12 +44,13 @@ floating panels.
 
 ### Uninstall
 Set `vr_enabled = 0` in `config.txt` and start the game once (this restores your desktop resolution),
-then delete `dinput8.dll`, `AmalurVR_XrHost.exe`, `config.txt` and the `AmalurVR` folder.
+then delete `dinput8.dll` (or `winmm.dll`), `AmalurVR_XrHost.exe`, `config.txt` and the `AmalurVR` folder.
 
 ## Configuration (`config.txt`)
 | Key | Default | Meaning |
 |---|---|---|
 | `vr_enabled` | 1 | 0 = mod does nothing (restores desktop resolution) |
+| `chainload` | auto | other DLLs to load; `auto` = `dinput8-2.dll` / `winmm-2.dll` if present |
 | `render_scale` | 1.0 | multiplier on the headset's recommended per-eye size |
 | `render_width` / `render_height` | 0 | fixed per-eye size (0 = automatic) |
 | `min_render_aspect` | 1.333 | widen the render to at least 4:3 so the game's UI (dialog) fits |
