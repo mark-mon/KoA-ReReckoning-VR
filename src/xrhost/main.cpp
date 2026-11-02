@@ -19,6 +19,7 @@
 #include "../common/ipc.h"
 #include "../common/log.h"
 #include "../common/version.h"
+#include "../../third_party/vrkit/vrkit_menu_placement.h"   // QuadPlacer (needs openxr.h first)
 
 using namespace avr;
 
@@ -93,7 +94,23 @@ static IpcPose g_shownPose[2];
 static IpcFov g_shownFov[2];
 static uint32_t g_shownFlags = 0;
 static uint32_t g_lastSubmitSeq = 0;
-static struct { uint32_t frames, shouldRender, fetched, busy, layersProj, layersQuad; DWORD t0; } g_stats{};
+static struct { uint32_t frames, shouldRender, fetched, busy, layersProj, layersQuad, panel, gaze; DWORD t0; } g_stats{};
+
+// In-headset settings menu panel (texture shared by the game)
+static struct {
+    uint32_t gen = 0, seq = 0, w = 0, h = 0;
+    SharedTex tex;
+    Swap swap;
+    bool hasImage = false;
+    vrkit::menu::QuadPlacer placer;
+} g_panel;
+
+// Eye gaze (XR_EXT_eye_gaze_interaction) for eye-tracked foveated rendering
+static bool g_gazeExt = false, g_gazeSupported = false;
+static XrActionSet g_gazeSet = XR_NULL_HANDLE;
+static XrAction g_gazeAction = XR_NULL_HANDLE;
+static XrSpace g_gazeSpace = XR_NULL_HANDLE;
+static float g_gazeX = 0, g_gazeY = 0;
 
 // ------------------------------------------------------------------ D3D11 device on the runtime's adapter
 static bool CreateDevice(LUID luid) {
@@ -115,9 +132,19 @@ static bool CreateDevice(LUID luid) {
     return true;
 }
 
+static void CreateGaze();
 // ------------------------------------------------------------------ OpenXR setup
 static bool InitXr() {
     std::vector<const char*> exts = {XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
+    {
+        uint32_t n = 0;
+        xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr);
+        std::vector<XrExtensionProperties> props(n, {XR_TYPE_EXTENSION_PROPERTIES});
+        xrEnumerateInstanceExtensionProperties(nullptr, n, &n, props.data());
+        for (auto& e : props) if (!strcmp(e.extensionName, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME)) g_gazeExt = true;
+        if (g_gazeExt) exts.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
+        LOGI("OpenXR eye gaze extension: %s", g_gazeExt ? "available" : "not offered by the runtime");
+    }
     XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO};
     strcpy_s(ci.applicationInfo.applicationName, "Amalur VR");
     ci.applicationInfo.applicationVersion = 1;
@@ -141,7 +168,12 @@ static bool InitXr() {
         return false;
     }
     XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
+    XrSystemEyeGazeInteractionPropertiesEXT gp{XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT};
+    if (g_gazeExt) sp.next = &gp;
     xrGetSystemProperties(g_inst, g_sys, &sp);
+    g_gazeSupported = g_gazeExt && gp.supportsEyeGazeInteraction;
+    g_shm->gazeSupported = g_gazeSupported ? 1 : 0;
+    LOGI("Eye tracking: %s", g_gazeSupported ? "supported" : "not available");
     LOGI("System: %s (max swapchain %ux%u)", sp.systemName, sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight);
     strncpy_s(g_shm->systemName, sp.systemName, _TRUNCATE);
 
@@ -170,6 +202,7 @@ static bool InitXr() {
     XRC(xrCreateReferenceSpace(g_sess, &rs, &g_local));
     rs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
     XRC(xrCreateReferenceSpace(g_sess, &rs, &g_view));
+    CreateGaze();
 
     // swapchain format: need the RGBA8 family so the game's atlas can be copied directly
     uint32_t fc = 0;
@@ -227,6 +260,119 @@ static bool SyncSharedTextures() {
     g_haveFrame = false;
     LOGI("Opened game atlases %ux%u (gen %u), swapchains %s", g_texW * 3, g_texH, gen, ok ? "ok" : "FAILED");
     return ok;
+}
+
+
+// ------------------------------------------------------------------ eye gaze
+static void CreateGaze() {
+    if (!g_gazeSupported) return;
+    XrActionSetCreateInfo asi{XR_TYPE_ACTION_SET_CREATE_INFO};
+    strcpy_s(asi.actionSetName, "amalurvr_gaze"); strcpy_s(asi.localizedActionSetName, "Eye gaze");
+    if (XR_FAILED(xrCreateActionSet(g_inst, &asi, &g_gazeSet))) { LOGW("eye gaze: action set failed"); return; }
+    XrActionCreateInfo ai{XR_TYPE_ACTION_CREATE_INFO};
+    ai.actionType = XR_ACTION_TYPE_POSE_INPUT;
+    strcpy_s(ai.actionName, "gaze_pose"); strcpy_s(ai.localizedActionName, "Gaze pose");
+    XrPath profile = 0, gazePath = 0;
+    bool ok = XR_SUCCEEDED(xrCreateAction(g_gazeSet, &ai, &g_gazeAction)) &&
+              XR_SUCCEEDED(xrStringToPath(g_inst, "/interaction_profiles/ext/eye_gaze_interaction", &profile)) &&
+              XR_SUCCEEDED(xrStringToPath(g_inst, "/user/eyes_ext/input/gaze_ext/pose", &gazePath));
+    if (ok) {
+        XrActionSuggestedBinding b{g_gazeAction, gazePath};
+        XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        sb.interactionProfile = profile; sb.countSuggestedBindings = 1; sb.suggestedBindings = &b;
+        ok = XR_SUCCEEDED(xrSuggestInteractionProfileBindings(g_inst, &sb));
+    }
+    if (ok) {
+        XrSessionActionSetsAttachInfo at{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+        at.countActionSets = 1; at.actionSets = &g_gazeSet;
+        ok = XR_SUCCEEDED(xrAttachSessionActionSets(g_sess, &at));
+    }
+    if (ok) {
+        XrActionSpaceCreateInfo sci{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+        sci.action = g_gazeAction; sci.poseInActionSpace.orientation.w = 1.0f;
+        ok = XR_SUCCEEDED(xrCreateActionSpace(g_sess, &sci, &g_gazeSpace));
+    }
+    LOGI("eye gaze: %s", ok ? "ready" : "setup failed");
+    if (!ok) { if (g_gazeSet) xrDestroyActionSet(g_gazeSet); g_gazeSet = XR_NULL_HANDLE; g_gazeAction = XR_NULL_HANDLE; g_gazeSpace = XR_NULL_HANDLE; }
+}
+
+// Once per headset frame: gaze direction relative to the head as tangents (x right, y up) -> shared memory.
+static void UpdateGaze(XrTime t) {
+    if (g_shm->debugFakeGaze) {   // testing without a tracker: a slow circle
+        double a = double(GetTickCount64() % 6000) / 6000.0 * 6.2831853;
+        g_shm->gazeTanX = float(0.35 * cos(a)); g_shm->gazeTanY = float(0.25 * sin(a));
+        g_shm->gazeSeq = g_shm->gazeSeq + 1;
+        g_stats.gaze++;
+        return;
+    }
+    if (!g_gazeSpace) return;
+    XrActiveActionSet aas{g_gazeSet, XR_NULL_PATH};
+    XrActionsSyncInfo si{XR_TYPE_ACTIONS_SYNC_INFO};
+    si.countActiveActionSets = 1; si.activeActionSets = &aas;
+    if (XR_FAILED(xrSyncActions(g_sess, &si))) return;
+    XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
+    if (XR_FAILED(xrLocateSpace(g_gazeSpace, g_view, t, &loc)) || !(loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) return;
+    const XrQuaternionf& q = loc.pose.orientation;
+    float fx = -2.0f * (q.x * q.z + q.w * q.y);              // forward = q * (0, 0, -1)
+    float fy = -2.0f * (q.y * q.z - q.w * q.x);
+    float fz = -(1.0f - 2.0f * (q.x * q.x + q.y * q.y));
+    if (fz > -0.2f) return;
+    float tx = fx / -fz, ty = fy / -fz, k = 0.5f;            // light smoothing
+    g_gazeX += (tx - g_gazeX) * k; g_gazeY += (ty - g_gazeY) * k;
+    g_shm->gazeTanX = g_gazeX; g_shm->gazeTanY = g_gazeY;
+    MemoryBarrier();
+    g_shm->gazeSeq = g_shm->gazeSeq + 1;
+    g_stats.gaze++;
+}
+
+// ------------------------------------------------------------------ settings menu panel
+static void ReleasePanelTex() {
+    if (g_panel.tex.mutex) g_panel.tex.mutex->Release();
+    if (g_panel.tex.tex) g_panel.tex.tex->Release();
+    g_panel.tex = SharedTex();
+}
+
+// True when the panel has an image to show this frame.
+static bool UpdatePanel() {
+    if (!g_shm->panelVisible) return false;
+    uint32_t gen = g_shm->panelGen;
+    if (gen != g_panel.gen) {
+        ReleasePanelTex();
+        g_panel.gen = gen;
+        g_panel.hasImage = false;
+        g_panel.seq = 0;
+        HANDLE h = (HANDLE)(uintptr_t)g_shm->panelHandle;
+        if (!h || FAILED(g_dev->OpenSharedResource(h, __uuidof(ID3D11Texture2D), (void**)&g_panel.tex.tex))) {
+            LOGE("settings panel: OpenSharedResource failed");
+            return false;
+        }
+        g_panel.tex.tex->QueryInterface(__uuidof(IDXGIKeyedMutex), (void**)&g_panel.tex.mutex);
+        uint32_t w = g_shm->panelW, h2 = g_shm->panelH;
+        if (!g_panel.swap.sc || g_panel.swap.w != w || g_panel.swap.h != h2) {
+            DestroySwap(g_panel.swap);
+            if (!CreateSwap(g_panel.swap, w, h2)) { LOGE("settings panel: swapchain failed"); return false; }
+            LOGI("settings panel swapchain %ux%u", w, h2);
+        }
+    }
+    if (!g_panel.tex.tex || !g_panel.swap.sc) return false;
+    uint32_t sq = g_shm->panelSeq;
+    if (sq != g_panel.seq && g_panel.tex.mutex && g_panel.tex.mutex->AcquireSync(0, 4) == S_OK) {
+        uint32_t idx = 0;
+        XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        if (XR_SUCCEEDED(xrAcquireSwapchainImage(g_panel.swap.sc, &ai, &idx))) {
+            XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            wi.timeout = 100000000;
+            if (XR_SUCCEEDED(xrWaitSwapchainImage(g_panel.swap.sc, &wi))) {
+                g_ctx->CopyResource(g_panel.swap.images[idx].texture, g_panel.tex.tex);
+                g_panel.hasImage = true;
+                g_panel.seq = sq;
+            }
+            XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            xrReleaseSwapchainImage(g_panel.swap.sc, &ri);
+        }
+        g_panel.tex.mutex->ReleaseSync(0);
+    }
+    return g_panel.hasImage;
 }
 
 // ------------------------------------------------------------------ frame
@@ -314,6 +460,7 @@ static bool RunFrame() {
     uint32_t vc = 0;
     if (XR_SUCCEEDED(xrLocateViews(g_sess, &vli, &vs, 2, &vc, views)) && (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT))
         PublishPoses(views, fs.predictedDisplayTime);
+    UpdateGaze(fs.predictedDisplayTime);
     g_shm->hostHeartbeat = g_shm->hostHeartbeat + 1;
     if (g_evtHostFrame) SetEvent(g_evtHostFrame);   // pace the game to the headset
 
@@ -347,7 +494,7 @@ static bool RunFrame() {
             quad.subImage.imageRect = {{0, 0}, {(int32_t)g_texW, (int32_t)g_texH}};
             quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             quad.size = {width, width * (float)g_texH / (float)g_texW};
-            if (!menu && g_shm->hudFollowHead) {
+            if (!menu && g_shm->hudAnchor == 1) {
                 quad.space = g_view;
                 quad.pose = Identity();
                 quad.pose.position = {0, g_shm->hudOffsetY, -dist};
@@ -360,6 +507,27 @@ static bool RunFrame() {
             layers.push_back((XrCompositionLayerBaseHeader*)&quad);
         }
     }
+    // Settings menu panel, on top of everything.
+    XrCompositionLayerQuad panel{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    bool panelShown = fs.shouldRender && UpdatePanel();
+    {
+        XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
+        bool headOk = panelShown && XR_SUCCEEDED(xrLocateSpace(g_view, g_local, fs.predictedDisplayTime, &head)) &&
+                      (head.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
+        g_panel.placer.Update(panelShown, headOk, head.pose);
+    }
+    if (panelShown) {
+        vrkit::menu::Placement pl;
+        pl.distance = g_shm->panelDistance; pl.width = g_shm->panelWidth; pl.offsetY = g_shm->panelOffsetY;
+        pl.anchor = (int)g_shm->panelAnchor;
+        panel.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied
+        panel.subImage.swapchain = g_panel.swap.sc;
+        panel.subImage.imageRect = {{0, 0}, {(int32_t)g_panel.swap.w, (int32_t)g_panel.swap.h}};
+        panel.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        g_panel.placer.Apply(pl, g_local, g_view, g_panel.swap.w, g_panel.swap.h, panel);
+        layers.push_back((XrCompositionLayerBaseHeader*)&panel);
+        g_stats.panel++;
+    }
     g_stats.frames++;
     if (fs.shouldRender) g_stats.shouldRender++;
     for (auto* l : layers) { if (l->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION) g_stats.layersProj++; else g_stats.layersQuad++; }
@@ -367,8 +535,9 @@ static bool RunFrame() {
     if (!g_stats.t0) g_stats.t0 = now;
     if (now - g_stats.t0 >= 10000) {
         float sec = (now - g_stats.t0) / 1000.0f;
-        LOGI("stats: %.1f host fps, shouldRender %u, game frames %.1f/s, slot busy %u, proj layers %u, quad layers %u, state %d",
-             g_stats.frames / sec, g_stats.shouldRender, g_stats.fetched / sec, g_stats.busy, g_stats.layersProj, g_stats.layersQuad, (int)g_state);
+        LOGI("stats: %.1f host fps, shouldRender %u, game frames %.1f/s, slot busy %u, proj layers %u, quad layers %u (settings panel %u), gaze samples %u, state %d",
+             g_stats.frames / sec, g_stats.shouldRender, g_stats.fetched / sec, g_stats.busy, g_stats.layersProj, g_stats.layersQuad,
+             g_stats.panel, g_stats.gaze, (int)g_state);
         g_stats = {}; g_stats.t0 = now;
     }
     XrFrameEndInfo fei{XR_TYPE_FRAME_END_INFO};
@@ -465,7 +634,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     }
     LOGI("Shutting down");
     if (g_running) xrEndSession(g_sess);
-    DestroySwap(g_eye[0]); DestroySwap(g_eye[1]); DestroySwap(g_hud);
+    DestroySwap(g_eye[0]); DestroySwap(g_eye[1]); DestroySwap(g_hud); DestroySwap(g_panel.swap);
+    ReleasePanelTex();
+    if (g_gazeSet) xrDestroyActionSet(g_gazeSet);
     if (g_sess) xrDestroySession(g_sess);
     if (g_inst) xrDestroyInstance(g_inst);
     g_shm->hostState = HOST_NONE;

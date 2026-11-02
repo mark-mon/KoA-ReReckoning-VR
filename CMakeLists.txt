@@ -21,13 +21,24 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
         third_party/minhook/src/trampoline.c third_party/minhook/src/hde/hde32.c)
     target_include_directories(minhook PUBLIC third_party/minhook/include)
 
+    add_library(vrkit STATIC
+        third_party/vrkit/vrkit_input.cpp third_party/vrkit/vrkit_menu.cpp third_party/vrkit/vrkit_menu_core.cpp
+        third_party/vrkit/vrkit_options.cpp
+        third_party/vrkit/imgui/imgui.cpp third_party/vrkit/imgui/imgui_draw.cpp third_party/vrkit/imgui/imgui_tables.cpp
+        third_party/vrkit/imgui/imgui_widgets.cpp third_party/vrkit/imgui/imgui_impl_dx11.cpp)
+    target_include_directories(vrkit PUBLIC third_party/vrkit third_party/vrkit/imgui)
+    target_link_libraries(vrkit PUBLIC minhook d3d11 d3dcompiler)
+
     add_library(dinput8 SHARED
         src/proxy/dllmain.cpp src/proxy/d3dhooks.cpp src/proxy/hookutil.cpp src/proxy/dds.cpp
         src/proxy/game.cpp src/proxy/input.cpp src/proxy/watch.cpp src/proxy/stereo.cpp src/proxy/xrlink.cpp src/proxy/proxy.cpp
+        src/proxy/settings.cpp src/proxy/menu_options.cpp src/proxy/vrs.cpp
         src/proxy/vtbl.c src/proxy/proxy.def ${COMMON_SRC})
-    target_link_libraries(dinput8 PRIVATE minhook user32 dxgi d3d11 dxguid advapi32)
+    target_link_libraries(dinput8 PRIVATE vrkit minhook user32 dxgi d3d11 dxguid advapi32)
     target_compile_options(dinput8 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:SSE2>)
     set_target_properties(dinput8 PROPERTIES OUTPUT_NAME dinput8 PREFIX "")
+    target_link_options(dinput8 PRIVATE /DELAYLOAD:d3dcompiler_47.dll)   # only needed once the settings menu starts
+    target_link_libraries(dinput8 PRIVATE delayimp)
     install(TARGETS dinput8 RUNTIME DESTINATION .)
 else()
     # ---------------------------------------------------------------- 64-bit: OpenXR host (AmalurVR_XrHost.exe)

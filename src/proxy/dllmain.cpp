@@ -9,6 +9,7 @@
 #include "stereo.h"
 #include "xrlink.h"
 #include "proxy.h"
+#include "settings.h"
 #include "../common/version.h"
 
 namespace avr {
@@ -34,6 +35,7 @@ static void Init(HMODULE self) {
     LOGI("Amalur VR " AVR_VERSION " (" __DATE__ " " __TIME__ ") loaded into %S (base %p)", path, (void*)GameModule().base);
     G().cfg.Dump();
     ProxyChainload(G().cfg);
+    SettingsLoad();
     StereoInit();
     PatchPersonalIni();
     InstallScreenSpoof();

@@ -45,11 +45,31 @@ hud_distance = 1.6
 hud_width = 1.6
 # Vertical offset of the HUD panel in meters (negative = lower)
 hud_offset_y = -0.05
-# 1 = HUD follows head, 0 = HUD fixed in front of the recentered position
-hud_follow_head = 0
+# world = HUD fixed in space in front of the recentre point, head = HUD follows your head
+# (in game: hold Back/View + click the left stick to switch)
+hud_anchor = world
 # Menus / cutscene screens panel (shown instead of the world when the game is in a full-screen menu)
 menu_distance = 2.0
 menu_width = 2.4
+
+# ---- Foveated rendering (NVIDIA RTX / GTX 16xx: Variable Rate Shading) ----
+# off | fixed (centre of each lens) | gaze (follows your eyes on eye-tracking headsets)
+foveation = off
+# low | medium | high: how coarsely the outer areas are shaded
+foveation_strength = medium
+# Full-quality radius and lowest-rate radius (1.0 = half the image width)
+foveation_inner = 0.45
+foveation_outer = 0.80
+
+# ---- In-headset settings menu ----
+# Open with: l3r3 = hold both stick clicks, ltrt = hold both triggers, none = keyboard only (Insert)
+menu_chord = l3r3
+menu_hold_ms = 300
+# Settings panel placement (metres). Anchor: world = stays where it opened, head = follows your head
+settings_distance = 1.0
+settings_width = 0.8
+settings_offset_y = -0.05
+settings_anchor = world
 
 # ---- Controls ----
 # Recenter the view: hold the gamepad Back/View button + click the right stick

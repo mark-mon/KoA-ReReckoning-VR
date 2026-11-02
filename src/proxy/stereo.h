@@ -20,6 +20,9 @@ void StereoRenderView(PFN_EngineFn5 orig, void* self, void* a1, void* a2, void* 
 void StereoOverlay(PFN_EngineFn5 orig, void* self, void* a1, void* a2, void* a3, void* a4, void* a5);
 
 void StereoCaptureDump(const wchar_t* dir);
+int StereoEyePass();                                   // eye being rendered (0/1), -1 outside the eye passes
+bool StereoEyeTangents(int eye, float t[4]);           // this frame's eye FOV as tangents: left, right, up, down
+void StereoRenderSize(UINT* w, UINT* h);               // per-eye render size
 bool StereoHudPhase();
 void StereoReleaseBackbuffer();
 void StereoNoteRenderTargets(UINT n, ID3D11RenderTargetView* const* rtv);

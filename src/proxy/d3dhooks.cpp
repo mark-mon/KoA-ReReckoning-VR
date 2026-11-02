@@ -9,6 +9,7 @@
 #include "game.h"
 #include "input.h"
 #include "stereo.h"
+#include "vrs.h"
 #include "xrlink.h"
 #include <intrin.h>
 #include <cstdio>
@@ -385,10 +386,12 @@ static void TrSetRT(UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStenc
 }
 static void STDMETHODCALLTYPE H_OMSetRenderTargets(ID3D11DeviceContext* c, UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStencilView* dsv) {
     if (t_internal == 0 && n) StereoNoteRenderTargets(n, rtv);
+    if (t_internal == 0 && c == G().context) VrsOnSetRT(c, n, rtv, dsv);
     if (CapturingOn(c)) TrSetRT(n, rtv, dsv, _AddressOfReturnAddress(), "OMSetRenderTargets");
     o_OMSetRenderTargets(c, n, rtv, dsv);
 }
 static void STDMETHODCALLTYPE H_OMSetRenderTargetsAndUnorderedAccessViews(ID3D11DeviceContext* c, UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStencilView* dsv, UINT us, UINT un, ID3D11UnorderedAccessView* const* u, const UINT* ic) {
+    if (t_internal == 0 && c == G().context && n != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL) VrsOnSetRT(c, n, rtv, dsv);
     if (CapturingOn(c) && n != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL) TrSetRT(n, rtv, dsv, _AddressOfReturnAddress(), "OMSetRenderTargetsAndUAV");
     o_OMSetRenderTargetsAndUnorderedAccessViews(c, n, rtv, dsv, us, un, u, ic);
 }

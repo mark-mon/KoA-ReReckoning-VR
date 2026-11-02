@@ -8,6 +8,9 @@
 #include "dds.h"
 #include "xrlink.h"
 #include "input.h"
+#include "settings.h"
+#include "vrs.h"
+#include "menu_options.h"
 #include "../common/vmath.h"
 #include "../common/ipc.h"
 #include <d3dcompiler.h>
@@ -34,16 +37,11 @@ struct Settings {
     bool enabled = true;
     bool nativeStereo = true;
     float unitsPerMeter = 100.0f;
-    float worldScale = 1.0f;
-    float ipdScale = 1.0f;
-    bool pitchLock = true;
     bool rollLock = true;
     UINT width = 0, height = 0;
-    float renderScale = 1.0f;
     float debugFovDeg = 100.0f;
     float debugIpd = 0.064f;
     float nearOverride = 0.0f;
-    bool mirror = true;
     int mirrorEye = 0;
 };
 static Settings S;
@@ -96,18 +94,13 @@ void StereoInit() {
     S.enabled = c.GetBool("vr_enabled", true);
     S.nativeStereo = c.GetBool("stereo_native", true);
     S.unitsPerMeter = c.GetFloat("units_per_meter", 100.0f);
-    S.worldScale = c.GetFloat("world_scale", 1.0f);
-    S.ipdScale = c.GetFloat("ipd_scale", 1.0f);
-    S.pitchLock = c.GetBool("camera_pitch_lock", true);
     S.rollLock = true;
     S.width = (UINT)c.GetInt("render_width", 0);
     S.height = (UINT)c.GetInt("render_height", 0);
-    S.renderScale = c.GetFloat("render_scale", 1.0f);
     S.debugFovDeg = c.GetFloat("debug_fov", 100.0f);
     S.nearOverride = c.GetFloat("near_clip", 0.0f);
-    S.mirror = c.GetBool("desktop_mirror", true);
     LOGI("stereo: enabled=%d native=%d unitsPerMeter=%.1f worldScale=%.2f pitchLock=%d", S.enabled, S.nativeStereo,
-         S.unitsPerMeter, S.worldScale, S.pitchLock);
+         S.unitsPerMeter, VS().worldScale, VS().pitchLock);
 }
 
 bool StereoWantsSwapchainSize(UINT* w, UINT* h) {
@@ -116,14 +109,14 @@ bool StereoWantsSwapchainSize(UINT* w, UINT* h) {
     if (!rw || !rh) {
         UINT hw = 0, hh = 0;
         if (XrWaitRecommendedSize(&hw, &hh, 15000)) {
-            rw = (UINT)(hw * S.renderScale + 0.5f);
-            rh = (UINT)(hh * S.renderScale + 0.5f);
+            rw = (UINT)(hw * VS().renderScale + 0.5f);
+            rh = (UINT)(hh * VS().renderScale + 0.5f);
         }
     }
     if (!rw || !rh) return false;
     // The game lays out its UI for the screen aspect; headsets are ~0.9:1, which clips wide UI (dialog).
     // Widen the render (projection still uses the exact headset FOV) to at least min_render_aspect.
-    float minAspect = G().cfg.GetFloat("min_render_aspect", 1.333f);
+    float minAspect = VS().minRenderAspect;
     if (minAspect > 0 && (float)rw / rh < minAspect) rw = (UINT)(rh * minAspect + 0.5f);
     rw &= ~1u; rh &= ~1u;
     if (rw * 3 > 16384) { float k = 16384.0f / (rw * 3); rw = (UINT)(rw * k) & ~1u; rh = (UINT)(rh * k) & ~1u; LOGW("stereo: clamped size for atlas limit"); }
@@ -146,6 +139,7 @@ VSO VS(uint id : SV_VertexID) {
     return o;
 }
 float4 PS(VSO i) : SV_Target {
+    if (params.y > 0.5 && (any(i.uv < 0) || any(i.uv > 1))) discard;   // clip to the destination rectangle
     float4 c = tex.Sample(samp, i.uv);
     if (params.x > 0.5) c.a = 1;
     return c;
@@ -276,7 +270,7 @@ static void ApplyEye(uint8_t* cam, const uint8_t* orig, const IpcPose& pose, con
     if (S.nearOverride > 0) n = S.nearOverride;
     M4 V = LoadM(orig + View);
     M4 C = InverseRigid(V);                 // rows: right, up, fwd, position (world)
-    if (S.pitchLock) {
+    if (VS().pitchLock) {
         V3 fw = C.Row(2); fw.z = 0;
         if (Len(fw) > 1e-3f) {
             fw = Norm(fw);
@@ -286,10 +280,10 @@ static void ApplyEye(uint8_t* cam, const uint8_t* orig, const IpcPose& pose, con
         }
     }
     // eye pose (OpenXR RH meters) -> game view space (LH, game units)
-    float upm = S.unitsPerMeter * S.worldScale;
+    float upm = S.unitsPerMeter * VS().worldScale;
     M4 E = FromQuat(pose.qx, pose.qy, pose.qz, pose.qw);
     E.m[0][2] = -E.m[0][2]; E.m[1][2] = -E.m[1][2]; E.m[2][0] = -E.m[2][0]; E.m[2][1] = -E.m[2][1];
-    E.m[3][0] = pose.px * upm * S.ipdScale; E.m[3][1] = pose.py * upm; E.m[3][2] = -pose.pz * upm; E.m[3][3] = 1;
+    E.m[3][0] = pose.px * upm * VS().ipdScale; E.m[3][1] = pose.py * upm; E.m[3][2] = -pose.pz * upm; E.m[3][3] = 1;
     M4 Ce = Mul(E, C);
     M4 Ve = InverseRigid(Ce);
     float tl = tanf(fov.left), tr = tanf(fov.right), tu = tanf(fov.up), td = tanf(fov.down);
@@ -432,6 +426,7 @@ void StereoRenderView(PFN_EngineFn5 orig, void* self, void* a1, void* a2, void* 
         g_eyePass = eye;
         ApplyEye(cam, saved, g_framePose[eye], g_frameFov[eye]);
         orig(self, nullptr, a1, a2, a3, a4, a5);
+        VrsUnbind(g_ctx);
         if (!g_eyesRendered[eye] && g_eyeWroteBB[eye]) {   // overlays skipped but the scene was rendered -> copy now
             CopyBackbufferTo(eye);
             g_eyesRendered[eye] = true;
@@ -459,7 +454,8 @@ void StereoNoteRenderTargets(UINT n, ID3D11RenderTargetView* const* rtv) {
 void StereoOverlay(PFN_EngineFn5 orig, void* self, void* a1, void* a2, void* a3, void* a4, void* a5) {
     if (!S.enabled || g_eyePass < 0) { orig(self, nullptr, a1, a2, a3, a4, a5); return; }
     if (!g_eyeWroteBB[g_eyePass]) { orig(self, nullptr, a1, a2, a3, a4, a5); return; }   // no scene this frame (menu)
-    // The scene for this eye is complete in the backbuffer: grab it.
+    // The scene for this eye is complete in the backbuffer: grab it. Overlays never use reduced shading.
+    VrsUnbind(g_ctx);
     CopyBackbufferTo(g_eyePass);
     g_eyesRendered[g_eyePass] = true;
     bool lastEye = !S.nativeStereo || g_eyePass == 1;
@@ -563,7 +559,7 @@ static void Blit(ID3D11ShaderResourceView* srv, float sx, float sy, float sw, fl
 }
 
 static void DrawMirror(bool world) {
-    if (!S.mirror || !g_vs || !g_cur || !g_cur->srv) return;
+    if (!VS().desktopMirror || !g_vs || !g_cur || !g_cur->srv) return;
     ID3D11Texture2D* bb = nullptr;
     if (FAILED(g_sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb)) || !bb) return;
     D3D11_RENDER_TARGET_VIEW_DESC rd{};
@@ -603,13 +599,85 @@ static void FitWindowToMonitor() {
     LOGI("desktop window fitted to %dx%d (render stays %ux%u)", ww, wh, g_w, g_h);
 }
 
+int StereoEyePass() { return g_eyePass; }
+void StereoRenderSize(UINT* w, UINT* h) { *w = g_w; *h = g_h; }
+bool StereoEyeTangents(int eye, float t[4]) {
+    if (eye < 0 || eye > 1) return false;
+    const IpcFov& f = g_frameFov[eye];
+    if (f.right == 0) return false;
+    t[0] = tanf(f.left); t[1] = tanf(f.right); t[2] = tanf(f.up); t[3] = tanf(f.down);
+    return true;
+}
+
+// The settings menu on the monitor (the headset gets it as its own layer): centred, at most 80% of the window.
+static void DrawMenuPreview(ID3D11Texture2D* tex) {
+    if (!g_vs || !tex) return;
+    static ID3D11Texture2D* srvTex = nullptr;
+    static ID3D11ShaderResourceView* srv = nullptr;
+    if (srvTex != tex) {
+        if (srv) srv->Release();
+        srv = nullptr; srvTex = tex;
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+        sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        sv.Texture2D.MipLevels = 1;
+        g_dev->CreateShaderResourceView(tex, &sv, &srv);
+    }
+    if (!srv) return;
+    ID3D11Texture2D* bb = nullptr;
+    if (FAILED(g_sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb)) || !bb) return;
+    D3D11_RENDER_TARGET_VIEW_DESC rd{};
+    rd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    ID3D11RenderTargetView* rtv = nullptr;
+    g_dev->CreateRenderTargetView(bb, &rd, &rtv);
+    bb->Release();
+    if (!rtv) return;
+    D3D11_TEXTURE2D_DESC td; tex->GetDesc(&td);
+    float k = std::min(0.8f * g_w / td.Width, 0.8f * g_h / td.Height);
+    float dw = td.Width * k / g_w, dh = td.Height * k / g_h;
+    ID3D11DeviceContext1* c1 = nullptr;
+    ID3DDeviceContextState* prev = nullptr;
+    if (g_ourState && SUCCEEDED(g_ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&c1)))
+        c1->SwapDeviceContextState(g_ourState, &prev);
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (SUCCEEDED(g_ctx->Map(g_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        float* f = (float*)m.pData;
+        f[0] = 0; f[1] = 0; f[2] = 1; f[3] = 1;
+        f[4] = (1 - dw) * 0.5f; f[5] = (1 - dh) * 0.5f; f[6] = dw; f[7] = dh;
+        f[8] = 0; f[9] = 1; f[10] = f[11] = 0;
+        g_ctx->Unmap(g_cb, 0);
+    }
+    D3D11_VIEWPORT vp{0, 0, (float)g_w, (float)g_h, 0, 1};
+    g_ctx->OMSetRenderTargets(1, &rtv, nullptr);
+    g_ctx->RSSetViewports(1, &vp);
+    g_ctx->RSSetState(g_rs);
+    g_ctx->OMSetDepthStencilState(g_ds, 0);
+    g_ctx->OMSetBlendState(g_blendAlpha, nullptr, 0xFFFFFFFF);   // the menu texture is premultiplied
+    g_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_ctx->IASetInputLayout(nullptr);
+    g_ctx->VSSetShader(g_vs, nullptr, 0);
+    g_ctx->PSSetShader(g_ps, nullptr, 0);
+    g_ctx->VSSetConstantBuffers(0, 1, &g_cb);
+    g_ctx->PSSetConstantBuffers(0, 1, &g_cb);
+    g_ctx->PSSetShaderResources(0, 1, &srv);
+    g_ctx->PSSetSamplers(0, 1, &g_samp);
+    g_ctx->Draw(3, 0);
+    ID3D11ShaderResourceView* nul = nullptr;
+    g_ctx->PSSetShaderResources(0, 1, &nul);
+    if (c1) { c1->SwapDeviceContextState(prev, nullptr); if (prev) prev->Release(); c1->Release(); }
+    rtv->Release();
+}
+
 void StereoBeforePresent(IDXGISwapChain* sc) {
     if (!S.enabled || !g_w) return;
     StereoLogStats();
     if (G().frame > 120) FitWindowToMonitor();
     InternalScope s;
+    VrsEndOfFrame(g_ctx);
     int combos = TakeCombos();
     if (combos & COMBO_RECENTER) XrRequestRecenter();
+    if (combos & COMBO_HUD_TOGGLE) MenuToggleHudAnchor();
     bool world = g_frameHasWorld;
     static int lastMode = -1;
     if ((int)world != lastMode) { lastMode = world; LOGI("stereo: frame mode -> %s", world ? "WORLD (stereo + HUD layer)" : "MENU (flat panel only)"); }
@@ -620,6 +688,8 @@ void StereoBeforePresent(IDXGISwapChain* sc) {
         if (g_cur && g_cur->tex) SaveTextureDDS(g_dev, g_ctx, g_cur->tex, DXGI_FORMAT_R8G8B8A8_UNORM, *dir + L"atlas.dds");
     }
     if (world) DrawMirror(true);
+    // Settings menu: drawn into its own texture and handed to the host; previewed on the monitor.
+    if (ID3D11Texture2D* menuTex = MenuOnPresent(g_dev, g_ctx)) DrawMenuPreview(menuTex);
     if (g_curSlot >= 0) {
         uint32_t flags = world ? SLOT_HUD_VISIBLE : (SLOT_HUD_VISIBLE | SLOT_MENU_MODE);
         g_ctx->Flush();

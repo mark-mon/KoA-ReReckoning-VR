@@ -56,6 +56,21 @@ render a character preview off-screen) are submitted in *menu mode*: only a larg
   take the newest atlas slot (keyed mutex) → copy into swapchains → submit the projection layer with
   the poses that slot was rendered with (correct reprojection) plus the HUD/menu quad.
 
+## Settings menu
+`src/proxy/menu_options.cpp` registers the live settings (`settings.h`, `VS()`) with vrkit
+(`third_party/vrkit`, shared with the other VR mods). vrkit draws with Dear ImGui into its own texture in a
+private `ID3DDeviceContextState` during Present and hooks `XInputGetState` (MinHook on the xinput1_3 export,
+underneath our IAT hook) so the game sees a neutral pad while the menu is open. The texture is copied into a
+legacy shared keyed-mutex texture (`IpcShared::panel*`); the host copies it into its own swapchain and
+submits it as the last quad layer, placed with vrkit's `QuadPlacer` (World = where you looked when it opened).
+
+## Foveated rendering
+`src/proxy/vrs.cpp`: NVAPI (`nvapi.dll`, loaded at runtime) Variable Rate Shading. One R8_UINT shading-rate
+image per eye (16x16 px tiles, three rings) is bound in the `OMSetRenderTargets` hook only while one of the two
+`RenderView` eye passes renders to a target of the eye render size with a depth buffer, and unbound before the
+overlays/HUD and at Present. The ring centre comes from the eye's OpenXR FOV tangents, or the gaze tangents the
+host publishes (`IpcShared::gaze*`, `XR_EXT_eye_gaze_interaction`, `debug_fake_gaze = 1` for testing).
+
 ## Diagnostics
 F11 (or a `capture.now` file in the game folder) records one frame: `trace.txt` (all D3D calls with
 call-site RVAs and constant-buffer contents), shader disassembly, `atlas.dds`, and optionally every

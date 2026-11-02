@@ -3,6 +3,7 @@
 // Game-side link to AmalurVR_XrHost.exe (64-bit OpenXR process) via shared memory.
 #include "xrlink.h"
 #include "globals.h"
+#include "settings.h"
 #include <cstdio>
 
 namespace avr {
@@ -26,12 +27,7 @@ void XrLinkInit() {
     auto& c = G().cfg;
     g_shm->version = kIpcVersion;
     g_shm->gamePid = GetCurrentProcessId();
-    g_shm->hudDistance = c.GetFloat("hud_distance", 1.6f);
-    g_shm->hudWidth = c.GetFloat("hud_width", 1.6f);
-    g_shm->hudOffsetY = c.GetFloat("hud_offset_y", -0.05f);
-    g_shm->hudFollowHead = c.GetBool("hud_follow_head", false);
-    g_shm->menuDistance = c.GetFloat("menu_distance", 2.0f);
-    g_shm->menuWidth = c.GetFloat("menu_width", 2.4f);
+    XrPushSettings(VS());
     g_shm->hostLogLevel = c.GetInt("log_level", 2);
     g_shm->lastSlot = -1;
     MemoryBarrier();
@@ -135,3 +131,49 @@ bool XrWaitHostFrame(unsigned ms) {
     return WaitForSingleObject(g_evtHost, ms) == WAIT_OBJECT_0;
 }
 }
+
+namespace avr {
+void XrPushSettings(const VrSettings& s) {
+    if (!g_shm) return;
+    g_shm->hudDistance = s.hudDistance;
+    g_shm->hudWidth = s.hudWidth;
+    g_shm->hudOffsetY = s.hudOffsetY;
+    g_shm->hudAnchor = (uint32_t)s.hudAnchor;
+    g_shm->menuDistance = s.menuDistance;
+    g_shm->menuWidth = s.menuWidth;
+    g_shm->panelAnchor = (uint32_t)s.panel.anchor;
+    g_shm->panelDistance = s.panel.distance;
+    g_shm->panelWidth = s.panel.width;
+    g_shm->panelOffsetY = s.panel.offsetY;
+    g_shm->debugFakeGaze = s.debugFakeGaze ? 1 : 0;
+}
+
+void XrPublishPanel(unsigned w, unsigned h, uint64_t handle) {
+    if (!g_shm) return;
+    g_shm->panelVisible = 0;
+    g_shm->panelW = w; g_shm->panelH = h; g_shm->panelHandle = handle;
+    MemoryBarrier();
+    g_shm->panelGen = g_shm->panelGen + 1;
+    LOGI("xrlink: settings panel texture %ux%u published", w, h);
+}
+
+void XrPanelUpdated(bool visible) {
+    if (!g_shm) return;
+    if (visible) { MemoryBarrier(); g_shm->panelSeq = g_shm->panelSeq + 1; }
+    g_shm->panelVisible = visible ? 1 : 0;
+}
+
+bool XrGazeSupported() { return g_shm && g_shm->gazeSupported; }
+
+bool XrGaze(float* tx, float* ty, unsigned maxAgeMs) {
+    static uint32_t lastSeq = 0;
+    static DWORD lastTick = 0;
+    if (!g_shm || !XrHostConnected()) return false;
+    uint32_t sq = g_shm->gazeSeq;
+    DWORD now = GetTickCount();
+    if (sq != lastSeq) { lastSeq = sq; lastTick = now; }
+    if (!sq || now - lastTick > maxAgeMs) return false;
+    *tx = g_shm->gazeTanX; *ty = g_shm->gazeTanY;
+    return true;
+}
+} // namespace avr

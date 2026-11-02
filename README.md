@@ -12,8 +12,13 @@ floating panels.
 - **True stereo**: both eyes rendered by the game's own renderer each frame, using the headset's exact
   per-eye field of view and your IPD. Characters, vegetation and props are re-projected per eye.
 - **Head tracking** on top of the game camera; the horizon is kept level (optional).
-- **HUD on a separate layer** (health, compass, prompts, dialog) shown as a floating panel; **menus and
-  loading screens** on a large flat panel with nothing behind it.
+- **HUD on a separate layer** (health, compass, prompts, dialog) shown as a floating panel, either
+  **fixed in space** or **following your head**; **menus and loading screens** on a large flat panel with
+  nothing behind it.
+- **In-headset settings menu**: hold both stick clicks (L3 + R3) or press Insert. Changes apply live
+  where possible and are saved to `config.txt`.
+- **Foveated rendering** (NVIDIA RTX / GTX 16xx, Variable Rate Shading): the outer part of each eye is
+  shaded at a reduced rate for more fps. Fixed, or eye-tracked on headsets with eye tracking.
 - **OpenXR**: works with SteamVR, Virtual Desktop (VDXR), PimaxXR, Oculus/Meta and other OpenXR runtimes.
   The game is 32-bit, so a small 64-bit helper (`AmalurVR_XrHost.exe`) owns the OpenXR session and
   receives the game's frames through shared GPU textures.
@@ -40,7 +45,12 @@ The mod's DLL works under two names: `dinput8.dll` or `winmm.dll` (it detects it
 | Action | Gamepad |
 |---|---|
 | Recenter view | hold **Back/View** + click **right stick** (also recenters at startup) |
+| HUD: fixed in space / follows head | hold **Back/View** + click **left stick** |
+| Settings menu | hold **L3 + R3** (both stick clicks) or press **Insert** |
 | Everything else | normal game controls |
+
+In the settings menu: D-pad / left stick to select and change, **A** toggle or run, **Y** back to the value
+it had at start-up, **LB / RB** previous / next page, **B** close (saves).
 
 ### Uninstall
 Set `vr_enabled = 0` in `config.txt` and start the game once (this restores your desktop resolution),
@@ -59,8 +69,13 @@ then delete `dinput8.dll` (or `winmm.dll`), `AmalurVR_XrHost.exe`, `config.txt` 
 | `camera_pitch_lock` | 1 | keep the horizon level (recommended) |
 | `game_fov_vertical` | 80 | the game's own FOV (wider = less pop-in at the edges when turning your head) |
 | `hud_distance` / `hud_width` / `hud_offset_y` | 1.6 / 1.6 / -0.05 | HUD panel placement in meters |
-| `hud_follow_head` | 0 | 1 = HUD follows your head |
+| `hud_anchor` | world | `world` = HUD fixed in space in front of the recentre point, `head` = follows your head |
 | `menu_distance` / `menu_width` | 2.0 / 2.4 | menu panel placement in meters |
+| `foveation` | off | `off`, `fixed` or `gaze` (eye-tracked) foveated rendering (NVIDIA RTX / GTX 16xx) |
+| `foveation_strength` | medium | `low`, `medium`, `high` |
+| `foveation_inner` / `foveation_outer` | 0.45 / 0.80 | full-rate radius / lowest-rate radius (1.0 = half the image width) |
+| `menu_chord` / `menu_hold_ms` | l3r3 / 300 | settings menu button chord (`l3r3`, `ltrt`, `none`) and hold time |
+| `settings_distance` / `settings_width` / `settings_offset_y` / `settings_anchor` | 1.0 / 0.8 / -0.05 / world | settings panel placement |
 | `desktop_mirror` | 1 | show the left eye + HUD in the game window |
 | `log_level` | 2 | 0 = errors … 4 = trace |
 
@@ -95,4 +110,5 @@ cross-compile setup and [docs/TECHNICAL.md](docs/TECHNICAL.md) for how the mod w
 ## License
 GPL-3.0-or-later — see [LICENSE](LICENSE).
 Third-party components: [MinHook](third_party/minhook/LICENSE.txt) (BSD-2-Clause),
-[OpenXR SDK](third_party/openxr/LICENSE) (Apache-2.0).
+[OpenXR SDK](third_party/openxr/LICENSE) (Apache-2.0), [Dear ImGui](third_party/vrkit/imgui/LICENSE.txt) (MIT),
+vrkit (the shared VR-mod settings menu, `third_party/vrkit`).

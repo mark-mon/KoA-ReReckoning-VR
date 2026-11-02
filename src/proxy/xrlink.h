@@ -15,6 +15,13 @@ void XrPublishTextures(unsigned w, unsigned h, unsigned format, const uint64_t h
 void XrSubmitSlot(int slot, const IpcPose pose[2], const IpcFov fov[2], int64_t time, uint32_t flags);
 int XrLastSubmittedSlot();
 void XrRequestRecenter();
-bool XrWaitHostFrame(unsigned ms);   // pace the game to the headset frame rate
+bool XrWaitHostFrame(unsigned ms);
+struct VrSettings;
+void XrPushSettings(const VrSettings& s);           // HUD / panel placement, gaze test mode
+// In-headset settings menu: the shared panel texture (created by the game, opened by the host).
+void XrPublishPanel(unsigned w, unsigned h, uint64_t handle);
+void XrPanelUpdated(bool visible);
+bool XrGaze(float* tx, float* ty, unsigned maxAgeMs);   // latest eye-gaze tangents, if fresh
+bool XrGazeSupported();   // pace the game to the headset frame rate
 
 } // namespace avr

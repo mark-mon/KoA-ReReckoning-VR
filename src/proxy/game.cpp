@@ -2,6 +2,7 @@
 // Copyright (C) 2026 KoA-ReReckoning-VR contributors
 // Engine-level hooks for Kingdoms of Amalur (koa.exe).
 #include "game.h"
+#include "settings.h"
 #include "globals.h"
 #include "hookutil.h"
 #include "watch.h"
@@ -182,7 +183,7 @@ static bool IniOverride(LPCWSTR key, wchar_t* out, size_t cap) {
     if (!_wcsicmp(key, L"Display Fullscreen") && G().cfg.GetBool("force_windowed", false)) { wcscpy_s(out, cap, L"0"); return true; }
     if (!_wcsicmp(key, L"Display Vsync")) { wcscpy_s(out, cap, L"0"); return true; }
     if (wcsstr(key, L"camera_fov_vertical") == key) {
-        int fov = G().cfg.GetInt("game_fov_vertical", 0);
+        int fov = VS().gameFovVertical;
         if (fov > 0) { swprintf(out, cap, L"%d", fov); return true; }
     }
     return false;
