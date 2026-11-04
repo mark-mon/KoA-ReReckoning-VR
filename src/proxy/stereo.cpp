@@ -9,6 +9,7 @@
 #include "xrlink.h"
 #include "input.h"
 #include "settings.h"
+#include "hookutil.h"
 #include "vrs.h"
 #include "menu_options.h"
 #include "../common/vmath.h"
@@ -42,6 +43,7 @@ struct Settings {
     float debugFovDeg = 100.0f;
     float debugIpd = 0.064f;
     float nearOverride = 0.0f;
+    float debugHeadYawDeg = 0.0f;   // test only: turn the (real or fake) head by this many degrees
     int mirrorEye = 0;
 };
 static Settings S;
@@ -66,6 +68,9 @@ static Atlas* g_cur = nullptr;
 
 static int g_eyePass = -1;                    // -1 not in stereo pass, else eye index
 static M4 g_origVP, g_eyeVP;                  // camera view-projection: as the game built it / for the current eye
+static volatile LONG g_fixedSky = 0;
+static bool g_fixSky = true;                  // stereo_fix_sky: give the sky dome each eye's camera
+static bool g_wvpProbe = false;              // debug_wvp_probe: log the camera matrices of draws we leave alone
 static volatile LONG g_fixedWVP = 0, g_skippedWVP = 0;
 static volatile bool g_hudPhase = false;      // HUD is being drawn onto the transparent backbuffer
 static std::map<ID3D11BlendState*, ID3D11BlendState*> g_hudBlend;
@@ -99,6 +104,9 @@ void StereoInit() {
     S.height = (UINT)c.GetInt("render_height", 0);
     S.debugFovDeg = c.GetFloat("debug_fov", 100.0f);
     S.nearOverride = c.GetFloat("near_clip", 0.0f);
+    g_wvpProbe = c.GetBool("debug_wvp_probe", false);
+    g_fixSky = c.GetBool("stereo_fix_sky", true);
+    S.debugHeadYawDeg = c.GetFloat("debug_head_yaw_deg", 0.0f);
     LOGI("stereo: enabled=%d native=%d unitsPerMeter=%.1f worldScale=%.2f pitchLock=%d", S.enabled, S.nativeStereo,
          S.unitsPerMeter, VS().worldScale, VS().pitchLock);
 }
@@ -330,8 +338,22 @@ static void ApplyEye(uint8_t* cam, const uint8_t* orig, const IpcPose& pose, con
 }
 
 // --------------------------------------------------------------------- frame flow
+// Test only (debug_head_yaw_deg): rotate both eye poses about the vertical axis, as if the head were turned.
+static void ApplyDebugYaw(IpcPose pose[2]) {
+    if (S.debugHeadYawDeg == 0) return;
+    float a = S.debugHeadYawDeg * 3.14159265f / 180.0f;
+    float qy = sinf(a * 0.5f), qw = cosf(a * 0.5f);     // rotation about +Y (OpenXR up), positive = turn left
+    for (int e = 0; e < 2; ++e) {
+        IpcPose& p = pose[e];
+        float x = p.qx, y = p.qy, z = p.qz, w = p.qw;   // q' = r * q, r = (0, qy, 0, qw)
+        p.qx = qw * x + qy * z; p.qy = qw * y + qy * w; p.qz = qw * z - qy * x; p.qw = qw * w - qy * y;
+        float c = cosf(a), sn = sinf(a), px = p.px, pz = p.pz;
+        p.px = c * px + sn * pz; p.pz = -sn * px + c * pz;
+    }
+}
+
 static void GetEyeViews(IpcPose pose[2], IpcFov fov[2], int64_t* t) {
-    if (XrGetLatestPoses(pose, fov, t)) return;
+    if (XrGetLatestPoses(pose, fov, t)) { ApplyDebugYaw(pose); return; }
     // debug fallback: fixed IPD, symmetric FOV matching the backbuffer aspect
     float hf = S.debugFovDeg * 0.5f * 3.14159265f / 180.0f;
     float aspect = g_h ? (float)g_w / g_h : 1.0f;
@@ -468,30 +490,88 @@ void StereoOverlay(PFN_EngineFn5 orig, void* self, void* a1, void* a2, void* a3,
 
 bool StereoHudPhase() { return g_hudPhase; }
 
-// Per-object constants (g_dynamicbuffer: world @0, worldVector @64, worldViewProjection @128) are baked into
-// draw packets with the game's camera before RenderView runs. During eye passes, re-derive WVP for this eye.
-void* __cdecl StereoCopyObjectConstants(void* dst, const void* src, size_t n) {
-    memcpy(dst, src, n);
-    if (g_eyePass < 0 || n < 192) return dst;
-    const float* f = (const float*)src;
-    double pred[4][4], fix[4][4];
-    double err = 0, mag = 0;
+// Tests whether the baked WVP equals world * C for the original camera matrix C; if so writes world * E.
+static bool TryRederive(const float* f, float* d, const M4& C, const M4& E) {
+    double fix[4][4], err = 0, mag = 0;
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j) {
             double a = 0, b = 0;
             for (int k = 0; k < 4; ++k) {
-                a += (double)f[i * 4 + k] * g_origVP.m[k][j];
-                b += (double)f[i * 4 + k] * g_eyeVP.m[k][j];
+                a += (double)f[i * 4 + k] * C.m[k][j];
+                b += (double)f[i * 4 + k] * E.m[k][j];
             }
-            pred[i][j] = a; fix[i][j] = b;
+            fix[i][j] = b;
             double w = f[32 + i * 4 + j];
             err = std::max(err, fabs(a - w));
             mag = std::max(mag, fabs(w));
         }
-    if (err > 1e-3 * (mag + 1.0)) { InterlockedIncrement(&g_skippedWVP); return dst; }   // not camera-relative (shadow, special)
-    float* d = (float*)dst + 32;
+    if (err > 1e-3 * (mag + 1.0)) return false;
     for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) d[i * 4 + j] = (float)fix[i][j];
-    InterlockedIncrement(&g_fixedWVP);
+    return true;
+}
+
+static void ProbeUnmatched(const float* f) {
+    // log a few distinct "camera matrices" M = world^-1 * WVP of draws we did not recognise
+    static int logged = 0;
+    static float seen[16][4];
+    if (logged >= 16) return;
+    M4 W; memcpy(W.m, f, 64);
+    double det = W.m[0][0] * (W.m[1][1] * W.m[2][2] - W.m[1][2] * W.m[2][1]) - W.m[0][1] * (W.m[1][0] * W.m[2][2] - W.m[1][2] * W.m[2][0]) +
+                 W.m[0][2] * (W.m[1][0] * W.m[2][1] - W.m[1][1] * W.m[2][0]);
+    if (fabs(det) < 1e-9) return;
+    // affine inverse (W rows 0-2 linear, row 3 translation)
+    M4 Wi{};
+    double id = 1.0 / det;
+    Wi.m[0][0] = float((W.m[1][1] * W.m[2][2] - W.m[1][2] * W.m[2][1]) * id); Wi.m[0][1] = float((W.m[0][2] * W.m[2][1] - W.m[0][1] * W.m[2][2]) * id); Wi.m[0][2] = float((W.m[0][1] * W.m[1][2] - W.m[0][2] * W.m[1][1]) * id);
+    Wi.m[1][0] = float((W.m[1][2] * W.m[2][0] - W.m[1][0] * W.m[2][2]) * id); Wi.m[1][1] = float((W.m[0][0] * W.m[2][2] - W.m[0][2] * W.m[2][0]) * id); Wi.m[1][2] = float((W.m[0][2] * W.m[1][0] - W.m[0][0] * W.m[1][2]) * id);
+    Wi.m[2][0] = float((W.m[1][0] * W.m[2][1] - W.m[1][1] * W.m[2][0]) * id); Wi.m[2][1] = float((W.m[0][1] * W.m[2][0] - W.m[0][0] * W.m[2][1]) * id); Wi.m[2][2] = float((W.m[0][0] * W.m[1][1] - W.m[0][1] * W.m[1][0]) * id);
+    for (int j = 0; j < 3; ++j) Wi.m[3][j] = -(W.m[3][0] * Wi.m[0][j] + W.m[3][1] * Wi.m[1][j] + W.m[3][2] * Wi.m[2][j]);
+    Wi.m[3][3] = 1;
+    M4 WVP; memcpy(WVP.m, f + 32, 64);
+    M4 M = Mul(Wi, WVP);
+    for (int k = 0; k < logged; ++k) {
+        bool same = true;
+        for (int j = 0; j < 4 && same; ++j) same = fabsf(seen[k][j] - M.m[3][j]) < 1e-2f * (1 + fabsf(M.m[3][j]));
+        if (same) return;
+    }
+    memcpy(seen[logged], M.m[3], 16);
+    ++logged;
+    LOGI("wvp probe %d: M rows (%.4f %.4f %.4f %.4f) (%.4f %.4f %.4f %.4f) (%.4f %.4f %.4f %.4f) (%.3f %.3f %.3f %.3f)", logged,
+         M.m[0][0], M.m[0][1], M.m[0][2], M.m[0][3], M.m[1][0], M.m[1][1], M.m[1][2], M.m[1][3],
+         M.m[2][0], M.m[2][1], M.m[2][2], M.m[2][3], M.m[3][0], M.m[3][1], M.m[3][2], M.m[3][3]);
+    LOGI("wvp probe %d: origVP rows (%.4f %.4f %.4f %.4f) (%.4f %.4f %.4f %.4f) (%.4f %.4f %.4f %.4f) (%.3f %.3f %.3f %.3f)", logged,
+         g_origVP.m[0][0], g_origVP.m[0][1], g_origVP.m[0][2], g_origVP.m[0][3], g_origVP.m[1][0], g_origVP.m[1][1], g_origVP.m[1][2], g_origVP.m[1][3],
+         g_origVP.m[2][0], g_origVP.m[2][1], g_origVP.m[2][2], g_origVP.m[2][3], g_origVP.m[3][0], g_origVP.m[3][1], g_origVP.m[3][2], g_origVP.m[3][3]);
+}
+
+// Per-object constants (g_dynamicbuffer: world @0, worldVector @64, worldViewProjection @128) are baked into
+// draw packets with the game's camera before RenderView runs. During eye passes, re-derive WVP for this eye:
+//  - world * VP(camera) at c8  -> world * VP(eye)   (ordinary objects)
+//  - VP(camera) itself at c0   -> VP(eye)           (the sky dome: 144-byte block, drawn with the bare camera matrix)
+// Anything else (shadow casters with the light's matrix, special effects) is left alone.
+void* __cdecl StereoCopyObjectConstants(void* dst, const void* src, size_t n) {
+    memcpy(dst, src, n);
+    if (g_eyePass < 0) return dst;
+    const float* f = (const float*)src;
+    float* d = (float*)dst + 32;
+    // Sky dome and similar draws: the block starts with the camera's view-projection itself (no world matrix).
+    if (n >= 64 && g_fixSky) {
+        double err = 0, mag = 0;
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+                err = std::max(err, (double)fabsf(f[i * 4 + j] - g_origVP.m[i][j]));
+                mag = std::max(mag, (double)fabsf(g_origVP.m[i][j]));
+            }
+        if (err <= 1e-4 * (mag + 1.0)) {
+            memcpy(dst, g_eyeVP.m, 64);
+            InterlockedIncrement(&g_fixedSky);
+            return dst;
+        }
+    }
+    if (n < 192) return dst;
+    if (TryRederive(f, d, g_origVP, g_eyeVP)) { InterlockedIncrement(&g_fixedWVP); return dst; }
+    InterlockedIncrement(&g_skippedWVP);
+    if (g_wvpProbe) ProbeUnmatched(f);
     return dst;
 }
 
@@ -500,7 +580,8 @@ void StereoLogStats() {
     DWORD now = GetTickCount();
     if (now - last < 10000) return;
     last = now;
-    LOGI("stereo: object WVP fixed %ld, left alone %ld (last 10s)", InterlockedExchange(&g_fixedWVP, 0), InterlockedExchange(&g_skippedWVP, 0));
+    LOGI("stereo: object WVP fixed %ld, sky fixed %ld, left alone %ld (last 10s)", InterlockedExchange(&g_fixedWVP, 0),
+         InterlockedExchange(&g_fixedSky, 0), InterlockedExchange(&g_skippedWVP, 0));
 }
 
 // While drawing the HUD layer: keep the game's colour blending but accumulate alpha as coverage

@@ -262,24 +262,42 @@ static void TrDraw(ID3D11DeviceContext* c, const char* kind, UINT count, UINT in
     TrCallers(ret);
 }
 
+// Test only (debug_skip_sites = RVA,RVA,...): drop draws whose call stack contains one of these game return
+// addresses, to find out which pass draws what.
+static std::vector<uint32_t> g_skipSites;
+static volatile LONG g_skipped = 0;
+static bool SkipDraw(ID3D11DeviceContext* c, void* retAddrSlot) {
+    if (g_skipSites.empty() || t_internal || c != G().context) return false;
+    uint32_t rv[8];
+    int k = ScanGameReturnAddresses(retAddrSlot, rv, 8, 1024);
+    for (int i = 0; i < k; ++i)
+        for (uint32_t s : g_skipSites)
+            if (rv[i] == s) { InterlockedIncrement(&g_skipped); return true; }
+    return false;
+}
+
 static void STDMETHODCALLTYPE H_Draw(ID3D11DeviceContext* c, UINT n, UINT s) {
     if (g_cap.active && c != G().context) InterlockedIncrement(&g_deferredDraws);
     if (CapturingOn(c)) TrDraw(c, "Draw", n, 1, _AddressOfReturnAddress());
+    if (SkipDraw(c, _AddressOfReturnAddress())) return;
     o_Draw(c, n, s);
 }
 static void STDMETHODCALLTYPE H_DrawIndexed(ID3D11DeviceContext* c, UINT n, UINT si, INT bv) {
     if (g_cap.active && c != G().context) InterlockedIncrement(&g_deferredDraws);
     if (CapturingOn(c)) TrDraw(c, "DrawIndexed", n, 1, _AddressOfReturnAddress());
+    if (SkipDraw(c, _AddressOfReturnAddress())) return;
     o_DrawIndexed(c, n, si, bv);
 }
 static void STDMETHODCALLTYPE H_DrawIndexedInstanced(ID3D11DeviceContext* c, UINT n, UINT inst, UINT si, INT bv, UINT sinst) {
     if (g_cap.active && c != G().context) InterlockedIncrement(&g_deferredDraws);
     if (CapturingOn(c)) TrDraw(c, "DrawIndexedInstanced", n, inst, _AddressOfReturnAddress());
+    if (SkipDraw(c, _AddressOfReturnAddress())) return;
     o_DrawIndexedInstanced(c, n, inst, si, bv, sinst);
 }
 static void STDMETHODCALLTYPE H_DrawInstanced(ID3D11DeviceContext* c, UINT n, UINT inst, UINT sv, UINT sinst) {
     if (g_cap.active && c != G().context) InterlockedIncrement(&g_deferredDraws);
     if (CapturingOn(c)) TrDraw(c, "DrawInstanced", n, inst, _AddressOfReturnAddress());
+    if (SkipDraw(c, _AddressOfReturnAddress())) return;
     o_DrawInstanced(c, n, inst, sv, sinst);
 }
 
@@ -629,6 +647,11 @@ static void LogContextVtable(const char* tag) {
 void InstallD3DHooks() {
     g_captureKey = G().cfg.GetInt("capture_key", VK_F11);
     g_dumpTargets = G().cfg.GetBool("capture_dump_targets", true);
+    {
+        std::string sk = G().cfg.GetStr("debug_skip_sites", "");
+        for (char* t = strtok(&sk[0], ", ;"); t; t = strtok(nullptr, ", ;")) g_skipSites.push_back((uint32_t)strtoul(t, nullptr, 16));
+        if (!g_skipSites.empty()) LOGW("TEST: skipping draws from %d call sites (debug_skip_sites)", (int)g_skipSites.size());
+    }
     void* p = HookIAT(GetModuleHandleW(nullptr), "d3d11.dll", "D3D11CreateDevice", (void*)&H_D3D11CreateDevice);
     if (p) { o_D3D11CreateDevice_ = (PFN_D3D11CreateDevice_)p; LOGI("Hooked D3D11CreateDevice via IAT"); }
     else LOGE("Failed to hook D3D11CreateDevice IAT entry");

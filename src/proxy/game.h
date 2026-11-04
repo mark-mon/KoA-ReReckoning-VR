@@ -13,6 +13,7 @@ constexpr uint32_t RenderView = 0x91F280;        // __thiscall Renderer::RenderV
 constexpr uint32_t SetupViewConstants = 0x8FE260; // uploads per-view constant buffer
 constexpr uint32_t FillViewCB = 0x8FADB0;        // writes camera data into CB
 constexpr uint32_t CopyObjectCBCall = 0x89669A;  // call memcpy(mappedCB4, packetConstants, n) in the draw-packet executor
+// (notes) 0x8B8AE0 draws the sky dome bucket; its 144-byte object block starts with the camera VP
 constexpr uint32_t RenderOverlays = 0x912B20;    // __thiscall, 5 args, ret 0x14: in-world/screen overlays drawn after tonemap
 }
 
