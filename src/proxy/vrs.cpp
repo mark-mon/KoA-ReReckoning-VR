@@ -249,7 +249,8 @@ void VrsEndOfFrame(ID3D11DeviceContext* ctx) {
 const char* VrsStatus() {
     if (!VS().foveation) return "off";
     if (g_failed) return g_nvTried && !g_nvOk ? "unavailable (needs an NVIDIA RTX GPU)" : "failed (see log)";
-    if (VS().foveation == 2) return XrGazeSupported() ? "on, eye-tracked" : "on (no eye tracking: fixed)";
+    float gx, gy;
+    if (VS().foveation == 2) return XrGaze(&gx, &gy, 500) ? "on, eye-tracked" : "on (no eye-tracking data: fixed)";
     return "on, fixed";
 }
 
