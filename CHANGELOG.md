@@ -10,6 +10,9 @@
 - **HUD anchor**: `hud_anchor = world | head` (replaces `hud_follow_head`, which is still read), switchable
   in the menu or with Back + left stick click; HUD placement changes apply live.
 - The XR host enables eye tracking when the runtime offers it.
+- **Sky fixed**: the sky no longer moves with your head. The sky dome was drawn with the game camera's own
+  matrix; it now gets each eye's camera (the clouds also lose their streaky look). `stereo_fix_sky = 0` turns
+  this off.
 
 ## 0.1.1
 - The mod's DLL can be installed as `dinput8.dll` or `winmm.dll` (it detects its own name), for setups where

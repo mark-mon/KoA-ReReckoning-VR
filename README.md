@@ -95,6 +95,7 @@ Known limitations:
 - Only the Steam version of Re-Reckoning (build `cs:15032`) is supported; other builds log a signature
   mismatch and fall back to mono.
 - Objects the game culls outside its own view can pop in at the edges when you turn your head far.
+- Foveated rendering needs an NVIDIA RTX (or GTX 16xx) GPU; on other GPUs the option does nothing.
 - The game and the headset must use the same GPU.
 
 ## Building from source
