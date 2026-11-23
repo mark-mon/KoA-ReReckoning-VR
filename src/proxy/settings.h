@@ -16,7 +16,7 @@ struct VrSettings {
     int gameFovVertical = 80;          // applied by the game when it reads its settings (restart)
     // Display
     float renderScale = 1.0f;          // restart
-    float minRenderAspect = 1.333f;    // restart
+    float hudAspect = 1.778f;          // minimum width/height of the render = the game UI canvas (restart)
     bool desktopMirror = true;
     float lumaSharpen = 0.65f;         // LumaSharpen strength on the eye images (0 = off)
     // HUD panel

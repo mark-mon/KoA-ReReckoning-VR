@@ -5,6 +5,9 @@
   moved with your head (and the menu ran at half frame rate).
 - **Cut-scenes**: the black letterbox bars the game draws as part of its UI are removed from the HUD panel
   (`hud_remove_letterbox`, menu: HUD > Hide cinematic bars). Full-screen fades are left alone.
+- **UI aspect 16:9**: the render (and so the game's UI canvas) is now at least 16:9; at 4:3 some shop and
+  dialog text was cut off. New key `hud_aspect` (default 1.778) replaces `min_render_aspect`, so old configs
+  pick up the new default. Costs some GPU time (more horizontal pixels; the 3D view keeps the headset FOV).
 - **LumaSharpen** (from vrkit) on the 3D image: `luma_sharpen` (default 0.65, 0 = off), menu: Display > Sharpening, live.
 
 ## 0.2.0

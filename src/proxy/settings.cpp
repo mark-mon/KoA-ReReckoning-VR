@@ -24,7 +24,8 @@ void SettingsLoad() {
     s.pitchLock = c.GetBool("camera_pitch_lock", true);
     s.gameFovVertical = c.GetInt("game_fov_vertical", 80);
     s.renderScale = c.GetFloat("render_scale", 1.0f);
-    s.minRenderAspect = c.GetFloat("min_render_aspect", 1.333f);
+    // hud_aspect replaced min_render_aspect (0.2.1): old configs had 1.333, which cuts off parts of the 16:9 UI
+    s.hudAspect = c.GetFloat("hud_aspect", 1.778f);
     s.desktopMirror = c.GetBool("desktop_mirror", true);
     s.lumaSharpen = c.GetFloat("luma_sharpen", 0.65f);
     s.hudDistance = c.GetFloat("hud_distance", 1.6f);

@@ -67,8 +67,8 @@ void Register() {
     // ---- Display
     o.AddFloat("Display", "render_scale", "Render scale", &s.renderScale, 0.5f, 2.0f, 0.05f, 2,
                "Multiplies the headset's recommended per-eye resolution.\nLower for more fps, higher for sharpness.").needsRestart = true;
-    o.AddFloat("Display", "min_render_aspect", "Minimum image width", &s.minRenderAspect, 0.0f, 1.8f, 0.05f, 3,
-               "Widens the render to at least this width/height ratio so the game's dialog UI fits\n(1.333 = 4:3, 0 = off).").needsRestart = true;
+    o.AddFloat("Display", "hud_aspect", "UI aspect ratio", &s.hudAspect, 1.0f, 2.0f, 0.05f, 3,
+               "Shape of the game's UI canvas (width / height). The UI is laid out for 16:9 (1.778);\nnarrower cuts off text. Wider renders more pixels. The 3D view keeps the headset FOV.").needsRestart = true;
     o.AddFloat("Display", "luma_sharpen", "Sharpening", &s.lumaSharpen, 0.0f, 2.0f, 0.05f, 2,
                "LumaSharpen on the 3D image (not the HUD or menus). 0 = off, 0.65 = classic.\nHigher = crisper, but can shimmer.");
     o.AddBool("Display", "desktop_mirror", "Mirror on the monitor", &s.desktopMirror,

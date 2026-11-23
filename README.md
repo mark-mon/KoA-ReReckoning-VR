@@ -63,7 +63,7 @@ then delete `dinput8.dll` (or `winmm.dll`), `AmalurVR_XrHost.exe`, `config.txt` 
 | `chainload` | auto | other DLLs to load; `auto` = `dinput8-2.dll` / `winmm-2.dll` if present |
 | `render_scale` | 1.0 | multiplier on the headset's recommended per-eye size |
 | `render_width` / `render_height` | 0 | fixed per-eye size (0 = automatic) |
-| `min_render_aspect` | 1.333 | widen the render to at least 4:3 so the game's UI (dialog) fits |
+| `hud_aspect` | 1.778 | shape of the game's UI canvas; 16:9 so shop/dialog text fits (replaces `min_render_aspect`) |
 | `world_scale` | 1.0 | larger = the world looks smaller |
 | `ipd_scale` | 1.0 | extra stereo separation multiplier |
 | `camera_pitch_lock` | 1 | keep the horizon level (recommended) |

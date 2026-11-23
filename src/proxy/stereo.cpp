@@ -130,8 +130,9 @@ bool StereoWantsSwapchainSize(UINT* w, UINT* h) {
     }
     if (!rw || !rh) return false;
     // The game lays out its UI for the screen aspect; headsets are ~0.9:1, which clips wide UI (dialog).
-    // Widen the render (projection still uses the exact headset FOV) to at least min_render_aspect.
-    float minAspect = VS().minRenderAspect;
+    // Widen the render (projection still uses the exact headset FOV) to at least hud_aspect: the game draws its UI
+    // into the same image and lays it out for 16:9.
+    float minAspect = VS().hudAspect;
     if (minAspect > 0 && (float)rw / rh < minAspect) rw = (UINT)(rh * minAspect + 0.5f);
     rw &= ~1u; rh &= ~1u;
     if (rw * 3 > 16384) { float k = 16384.0f / (rw * 3); rw = (UINT)(rw * k) & ~1u; rh = (UINT)(rh * k) & ~1u; LOGW("stereo: clamped size for atlas limit"); }
