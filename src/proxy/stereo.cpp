@@ -89,6 +89,7 @@ static int64_t g_frameTime = 0;
 static ID3D11VertexShader* g_vs = nullptr;
 static ID3D11PixelShader* g_ps = nullptr;
 static ID3D11PixelShader* g_psLetterbox = nullptr;
+static ID3D11PixelShader* g_psSharpen = nullptr;
 static ID3D11Texture2D* g_hudTmp = nullptr;      // backbuffer copy for the letterbox-removing HUD copy
 static ID3D11ShaderResourceView* g_hudTmpSrv = nullptr;
 static ID3D11Buffer* g_cb = nullptr;
@@ -165,6 +166,25 @@ bool BarRow(int y, uint w) {
     [unroll] for (int i = 0; i < 16; ++i) if (!BarPixel(tex.Load(int3((i * 2 + 1) * w / 32, y, 0)))) return false;
     return true;
 }
+// LumaSharpen (CeeJay.dk, ReShade/SweetFX "normal" pattern, as in vrkit/lumasharpen.md): sharpens only the luma of
+// the gamma-encoded eye image, clamped against halos. params.x = strength, params.zw = region pixel offset.
+float4 PSSharpen(float4 pos : SV_Position) : SV_Target {
+    int2 p = int2(pos.xy) - int2(params.zw);
+    float3 ori = tex.Load(int3(p, 0)).rgb;
+    uint w, h;
+    tex.GetDimensions(w, h);
+    float2 texel = 1.0 / float2(w, h);
+    float2 uv = (float2(p) + 0.5) * texel;
+    float2 d = texel * 0.5;
+    float3 blur = tex.SampleLevel(samp, uv + float2(d.x, -d.y), 0).rgb + tex.SampleLevel(samp, uv - float2(d.x, -d.y), 0).rgb +
+                  tex.SampleLevel(samp, uv + d, 0).rgb + tex.SampleLevel(samp, uv - d, 0).rgb;
+    blur *= 0.25;
+    const float sharpClamp = 0.035;
+    float3 strengthLuma = float3(0.2126, 0.7152, 0.0722) * params.x * (0.5 / sharpClamp);
+    float sharpLuma = saturate(dot(ori - blur, strengthLuma) + 0.5);
+    sharpLuma = (sharpClamp * 2.0) * sharpLuma - sharpClamp;
+    return float4(saturate(ori + sharpLuma), 1);
+}
 float4 PSLetterbox(float4 pos : SV_Position) : SV_Target {
     int2 p = int2(pos.xy) - int2(params.zw);
     float4 c = tex.Load(int3(p, 0));
@@ -198,6 +218,13 @@ static bool CreateBlitResources() {
         lb->Release();
     } else {
         LOGW("stereo: letterbox shader compile failed: %s", err ? (const char*)err->GetBufferPointer() : "?");
+    }
+    ID3DBlob* sb = nullptr;
+    if (SUCCEEDED(compile(kShader, strlen(kShader), "blit", nullptr, nullptr, "PSSharpen", "ps_4_0", 0, 0, &sb, &err))) {
+        g_dev->CreatePixelShader(sb->GetBufferPointer(), sb->GetBufferSize(), nullptr, &g_psSharpen);
+        sb->Release();
+    } else {
+        LOGW("stereo: sharpen shader compile failed: %s", err ? (const char*)err->GetBufferPointer() : "?");
     }
     D3D11_BUFFER_DESC bd{ 48, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
     g_dev->CreateBuffer(&bd, nullptr, &g_cb);
@@ -431,8 +458,11 @@ static uint32_t ReadPixel(ID3D11Texture2D* t, UINT x, UINT y) {
     return v;
 }
 
+static bool CopyBackbufferWithShader(int region, ID3D11PixelShader* ps, float param);
 static void CopyBackbufferTo(int region) {
     if (!g_cur || !g_cur->tex || !g_sc) return;
+    // Eye images: LumaSharpen while copying, if enabled (the HUD region is never sharpened).
+    if (region < 2 && VS().lumaSharpen > 0.0f && CopyBackbufferWithShader(region, g_psSharpen, VS().lumaSharpen)) return;
     InternalScope s;
     ID3D11Texture2D* bb = nullptr;
     if (FAILED(g_sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb)) || !bb) return;
@@ -449,9 +479,10 @@ static void CopyBackbufferTo(int region) {
     bb->Release();
 }
 
-// HUD region = backbuffer, minus the black bars the game draws over cinematics (they are part of the UI).
-static bool CopyHudWithoutLetterbox() {
-    if (!g_cur || !g_cur->rtv || !g_psLetterbox || !g_vs || !g_sc) return false;
+// Backbuffer -> atlas region through a pixel shader (scratch copy first; the backbuffer cannot be read directly).
+// Used for the HUD without the cut-scene letterbox and for sharpened eye images. Leaves the game's state alone.
+static bool CopyBackbufferWithShader(int region, ID3D11PixelShader* ps, float param) {
+    if (!g_cur || !g_cur->rtv || !ps || !g_vs || !g_sc) return false;
     InternalScope s;
     if (g_hudTmp) {
         D3D11_TEXTURE2D_DESC d; g_hudTmp->GetDesc(&d);
@@ -480,10 +511,10 @@ static bool CopyHudWithoutLetterbox() {
         float* f = (float*)m.pData;
         f[0] = 0; f[1] = 0; f[2] = 1; f[3] = 1;        // src
         f[4] = 0; f[5] = 0; f[6] = 1; f[7] = 1;        // dst = whole viewport
-        f[8] = 0; f[9] = 0; f[10] = float(2 * g_w); f[11] = 0;
+        f[8] = param; f[9] = 0; f[10] = float(region * g_w); f[11] = 0;
         g_ctx->Unmap(g_cb, 0);
     }
-    D3D11_VIEWPORT vp{float(2 * g_w), 0, (float)g_w, (float)g_h, 0, 1};
+    D3D11_VIEWPORT vp{float(region * g_w), 0, (float)g_w, (float)g_h, 0, 1};
     g_ctx->OMSetRenderTargets(1, &g_cur->rtv, nullptr);
     g_ctx->RSSetViewports(1, &vp);
     g_ctx->RSSetState(g_rs);
@@ -492,10 +523,11 @@ static bool CopyHudWithoutLetterbox() {
     g_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_ctx->IASetInputLayout(nullptr);
     g_ctx->VSSetShader(g_vs, nullptr, 0);
-    g_ctx->PSSetShader(g_psLetterbox, nullptr, 0);
+    g_ctx->PSSetShader(ps, nullptr, 0);
     g_ctx->VSSetConstantBuffers(0, 1, &g_cb);
     g_ctx->PSSetConstantBuffers(0, 1, &g_cb);
     g_ctx->PSSetShaderResources(0, 1, &g_hudTmpSrv);
+    g_ctx->PSSetSamplers(0, 1, &g_samp);
     g_ctx->Draw(3, 0);
     ID3D11ShaderResourceView* nul = nullptr;
     g_ctx->PSSetShaderResources(0, 1, &nul);
@@ -871,7 +903,7 @@ void StereoBeforePresent(IDXGISwapChain* sc) {
     if ((int)world != lastMode) { lastMode = world; LOGI("stereo: frame mode -> %s", world ? "WORLD (stereo + HUD layer)" : "MENU (flat panel only)"); }
     if (!world) { XrWaitHostFrame(30); AcquireFrameTarget(); }
     // HUD (or full menu screen) = current backbuffer; in the world, without the cinematic letterbox bars
-    if (!(world && VS().hudRemoveLetterbox && CopyHudWithoutLetterbox())) CopyBackbufferTo(2);
+    if (!(world && VS().hudRemoveLetterbox && CopyBackbufferWithShader(2, g_psLetterbox, 0))) CopyBackbufferTo(2);
     if (const std::wstring* dir = ActiveCaptureDir()) {
         if (g_cur && g_cur->tex) SaveTextureDDS(g_dev, g_ctx, g_cur->tex, DXGI_FORMAT_R8G8B8A8_UNORM, *dir + L"atlas.dds");
     }

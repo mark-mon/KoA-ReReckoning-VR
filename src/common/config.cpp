@@ -86,6 +86,8 @@ static const char kDefaultConfig[] =
 "# Minimum width/height of the render. Headsets are ~0.9:1, which makes the game's UI (e.g. dialog) too narrow.\n"
 "# 1.333 = 4:3 (the extra width only adds horizontal detail; the 3D view still uses the headset FOV). 0 = off\n"
 "min_render_aspect = 1.333\n"
+"# LumaSharpen on the 3D image (not the HUD/menus): 0 = off, 0.65 = classic, up to 2\n"
+"luma_sharpen = 0.65\n"
 "# 1 = render both eyes natively each frame (recommended). 0 = alternate-eye fallback\n"
 "stereo_native = 1\n"
 "# World scale: larger = world looks smaller. 1.0 = game units as authored\n"

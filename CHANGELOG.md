@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+- **Pause / inventory menu**: the character preview is rendered once with the game's camera; it was black and
+  moved with your head (and the menu ran at half frame rate).
+- **Cut-scenes**: the black letterbox bars the game draws as part of its UI are removed from the HUD panel
+  (`hud_remove_letterbox`, menu: HUD > Hide cinematic bars). Full-screen fades are left alone.
+- **LumaSharpen** (from vrkit) on the 3D image: `luma_sharpen` (default 0.65, 0 = off), menu: Display > Sharpening, live.
+
 ## 0.2.0
 - **In-headset settings menu** (vrkit / Dear ImGui): hold L3 + R3 or press Insert. Pages for View, Display,
   Foveation, HUD and the settings panel itself. Most settings apply live; all are saved to `config.txt`

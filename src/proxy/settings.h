@@ -18,6 +18,7 @@ struct VrSettings {
     float renderScale = 1.0f;          // restart
     float minRenderAspect = 1.333f;    // restart
     bool desktopMirror = true;
+    float lumaSharpen = 0.65f;         // LumaSharpen strength on the eye images (0 = off)
     // HUD panel
     float hudDistance = 1.6f, hudWidth = 1.6f, hudOffsetY = -0.05f;
     int hudAnchor = 0;                 // 0 = World, 1 = Head

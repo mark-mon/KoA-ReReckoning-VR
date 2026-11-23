@@ -69,6 +69,8 @@ void Register() {
                "Multiplies the headset's recommended per-eye resolution.\nLower for more fps, higher for sharpness.").needsRestart = true;
     o.AddFloat("Display", "min_render_aspect", "Minimum image width", &s.minRenderAspect, 0.0f, 1.8f, 0.05f, 3,
                "Widens the render to at least this width/height ratio so the game's dialog UI fits\n(1.333 = 4:3, 0 = off).").needsRestart = true;
+    o.AddFloat("Display", "luma_sharpen", "Sharpening", &s.lumaSharpen, 0.0f, 2.0f, 0.05f, 2,
+               "LumaSharpen on the 3D image (not the HUD or menus). 0 = off, 0.65 = classic.\nHigher = crisper, but can shimmer.");
     o.AddBool("Display", "desktop_mirror", "Mirror on the monitor", &s.desktopMirror,
               "Show the left eye and the HUD in the game window.");
 

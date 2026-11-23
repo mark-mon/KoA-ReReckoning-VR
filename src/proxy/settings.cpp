@@ -26,6 +26,7 @@ void SettingsLoad() {
     s.renderScale = c.GetFloat("render_scale", 1.0f);
     s.minRenderAspect = c.GetFloat("min_render_aspect", 1.333f);
     s.desktopMirror = c.GetBool("desktop_mirror", true);
+    s.lumaSharpen = c.GetFloat("luma_sharpen", 0.65f);
     s.hudDistance = c.GetFloat("hud_distance", 1.6f);
     s.hudWidth = c.GetFloat("hud_width", 1.6f);
     s.hudOffsetY = c.GetFloat("hud_offset_y", -0.05f);

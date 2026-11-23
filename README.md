@@ -76,6 +76,8 @@ then delete `dinput8.dll` (or `winmm.dll`), `AmalurVR_XrHost.exe`, `config.txt` 
 | `foveation_inner` / `foveation_outer` | 0.45 / 0.80 | full-rate radius / lowest-rate radius (1.0 = half the image width) |
 | `menu_chord` / `menu_hold_ms` | l3r3 / 300 | settings menu button chord (`l3r3`, `ltrt`, `none`) and hold time |
 | `settings_distance` / `settings_width` / `settings_offset_y` / `settings_anchor` | 1.0 / 0.8 / -0.05 / world | settings panel placement |
+| `luma_sharpen` | 0.65 | LumaSharpen on the 3D image (not the HUD or menus); 0 = off, up to 2 |
+| `hud_remove_letterbox` | 1 | hide the black bars the game draws above and below cut-scenes |
 | `desktop_mirror` | 1 | show the left eye + HUD in the game window |
 | `log_level` | 2 | 0 = errors … 4 = trace |
 
