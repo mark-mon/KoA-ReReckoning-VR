@@ -57,6 +57,7 @@ static UINT g_w = 0, g_h = 0;                 // per-eye size (= backbuffer size
 struct Atlas {
     ID3D11Texture2D* tex = nullptr;
     ID3D11ShaderResourceView* srv = nullptr;
+    ID3D11RenderTargetView* rtv = nullptr;
     IDXGIKeyedMutex* mutex = nullptr;
     HANDLE shared = nullptr;
 };
@@ -72,6 +73,8 @@ static volatile LONG g_fixedSky = 0;
 static bool g_fixSky = true;                  // stereo_fix_sky: give the sky dome each eye's camera
 static bool g_wvpProbe = false;              // debug_wvp_probe: log the camera matrices of draws we leave alone
 static volatile LONG g_fixedWVP = 0, g_skippedWVP = 0;
+static bool g_prevNoWorld = false;            // the last RenderView drew no world (menu character preview)
+static bool g_monoPass = false, g_monoWroteBB = false;
 static volatile bool g_hudPhase = false;      // HUD is being drawn onto the transparent backbuffer
 static std::map<ID3D11BlendState*, ID3D11BlendState*> g_hudBlend;
 static bool g_eyesRendered[2] = {};
@@ -85,6 +88,9 @@ static int64_t g_frameTime = 0;
 // blit resources
 static ID3D11VertexShader* g_vs = nullptr;
 static ID3D11PixelShader* g_ps = nullptr;
+static ID3D11PixelShader* g_psLetterbox = nullptr;
+static ID3D11Texture2D* g_hudTmp = nullptr;      // backbuffer copy for the letterbox-removing HUD copy
+static ID3D11ShaderResourceView* g_hudTmpSrv = nullptr;
 static ID3D11Buffer* g_cb = nullptr;
 static ID3D11SamplerState* g_samp = nullptr;
 static ID3D11BlendState* g_blendOpaque = nullptr;
@@ -152,6 +158,22 @@ float4 PS(VSO i) : SV_Target {
     if (params.x > 0.5) c.a = 1;
     return c;
 }
+// HUD copy without the cinematic letterbox: rows that are opaque black across the whole width become transparent.
+// Skipped when the centre row is black too (full-screen fades). params.zw = render-target pixel offset of the region.
+bool BarPixel(float4 c) { return c.a > 0.99 && max(c.r, max(c.g, c.b)) < 0.03; }
+bool BarRow(int y, uint w) {
+    [unroll] for (int i = 0; i < 16; ++i) if (!BarPixel(tex.Load(int3((i * 2 + 1) * w / 32, y, 0)))) return false;
+    return true;
+}
+float4 PSLetterbox(float4 pos : SV_Position) : SV_Target {
+    int2 p = int2(pos.xy) - int2(params.zw);
+    float4 c = tex.Load(int3(p, 0));
+    if (!BarPixel(c)) return c;
+    uint w, h;
+    tex.GetDimensions(w, h);
+    if (!BarRow(p.y, w) || BarRow(h / 2, w)) return c;
+    return float4(0, 0, 0, 0);
+}
 )";
 
 typedef HRESULT(WINAPI* PFN_D3DCompile)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
@@ -170,6 +192,13 @@ static bool CreateBlitResources() {
     g_dev->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(), nullptr, &g_vs);
     g_dev->CreatePixelShader(psb->GetBufferPointer(), psb->GetBufferSize(), nullptr, &g_ps);
     vsb->Release(); psb->Release();
+    ID3DBlob* lb = nullptr;
+    if (SUCCEEDED(compile(kShader, strlen(kShader), "blit", nullptr, nullptr, "PSLetterbox", "ps_4_0", 0, 0, &lb, &err))) {
+        g_dev->CreatePixelShader(lb->GetBufferPointer(), lb->GetBufferSize(), nullptr, &g_psLetterbox);
+        lb->Release();
+    } else {
+        LOGW("stereo: letterbox shader compile failed: %s", err ? (const char*)err->GetBufferPointer() : "?");
+    }
     D3D11_BUFFER_DESC bd{ 48, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
     g_dev->CreateBuffer(&bd, nullptr, &g_cb);
     D3D11_SAMPLER_DESC sd{};
@@ -217,6 +246,10 @@ static bool CreateAtlas(Atlas& a, bool shared) {
     sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
     sv.Texture2D.MipLevels = 1;
     g_dev->CreateShaderResourceView(a.tex, &sv, &a.srv);
+    D3D11_RENDER_TARGET_VIEW_DESC rv{};
+    rv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    g_dev->CreateRenderTargetView(a.tex, &rv, &a.rtv);
     if (shared) {
         a.tex->QueryInterface(__uuidof(IDXGIKeyedMutex), (void**)&a.mutex);
         IDXGIResource* r = nullptr;
@@ -227,6 +260,7 @@ static bool CreateAtlas(Atlas& a, bool shared) {
 
 static void ReleaseAtlas(Atlas& a) {
     if (a.srv) a.srv->Release();
+    if (a.rtv) a.rtv->Release();
     if (a.mutex) a.mutex->Release();
     if (a.tex) a.tex->Release();
     a = Atlas();
@@ -415,6 +449,60 @@ static void CopyBackbufferTo(int region) {
     bb->Release();
 }
 
+// HUD region = backbuffer, minus the black bars the game draws over cinematics (they are part of the UI).
+static bool CopyHudWithoutLetterbox() {
+    if (!g_cur || !g_cur->rtv || !g_psLetterbox || !g_vs || !g_sc) return false;
+    InternalScope s;
+    if (g_hudTmp) {
+        D3D11_TEXTURE2D_DESC d; g_hudTmp->GetDesc(&d);
+        if (d.Width != g_w || d.Height != g_h) { g_hudTmpSrv->Release(); g_hudTmp->Release(); g_hudTmp = nullptr; g_hudTmpSrv = nullptr; }
+    }
+    if (!g_hudTmp) {
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = g_w; d.Height = g_h; d.MipLevels = 1; d.ArraySize = 1; d.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+        d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_DEFAULT; d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(g_dev->CreateTexture2D(&d, nullptr, &g_hudTmp))) return false;
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+        sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; sv.Texture2D.MipLevels = 1;
+        if (FAILED(g_dev->CreateShaderResourceView(g_hudTmp, &sv, &g_hudTmpSrv))) { g_hudTmp->Release(); g_hudTmp = nullptr; return false; }
+    }
+    ID3D11Texture2D* bb = nullptr;
+    if (FAILED(g_sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb)) || !bb) return false;
+    D3D11_BOX box{0, 0, 0, g_w, g_h, 1};
+    g_ctx->CopySubresourceRegion(g_hudTmp, 0, 0, 0, 0, bb, 0, &box);
+    bb->Release();
+    ID3D11DeviceContext1* c1 = nullptr;
+    ID3DDeviceContextState* prev = nullptr;
+    if (g_ourState && SUCCEEDED(g_ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&c1)))
+        c1->SwapDeviceContextState(g_ourState, &prev);
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (SUCCEEDED(g_ctx->Map(g_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        float* f = (float*)m.pData;
+        f[0] = 0; f[1] = 0; f[2] = 1; f[3] = 1;        // src
+        f[4] = 0; f[5] = 0; f[6] = 1; f[7] = 1;        // dst = whole viewport
+        f[8] = 0; f[9] = 0; f[10] = float(2 * g_w); f[11] = 0;
+        g_ctx->Unmap(g_cb, 0);
+    }
+    D3D11_VIEWPORT vp{float(2 * g_w), 0, (float)g_w, (float)g_h, 0, 1};
+    g_ctx->OMSetRenderTargets(1, &g_cur->rtv, nullptr);
+    g_ctx->RSSetViewports(1, &vp);
+    g_ctx->RSSetState(g_rs);
+    g_ctx->OMSetDepthStencilState(g_ds, 0);
+    g_ctx->OMSetBlendState(g_blendOpaque, nullptr, 0xFFFFFFFF);
+    g_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_ctx->IASetInputLayout(nullptr);
+    g_ctx->VSSetShader(g_vs, nullptr, 0);
+    g_ctx->PSSetShader(g_psLetterbox, nullptr, 0);
+    g_ctx->VSSetConstantBuffers(0, 1, &g_cb);
+    g_ctx->PSSetConstantBuffers(0, 1, &g_cb);
+    g_ctx->PSSetShaderResources(0, 1, &g_hudTmpSrv);
+    g_ctx->Draw(3, 0);
+    ID3D11ShaderResourceView* nul = nullptr;
+    g_ctx->PSSetShaderResources(0, 1, &nul);
+    if (c1) { c1->SwapDeviceContextState(prev, nullptr); if (prev) prev->Release(); c1->Release(); }
+    return true;
+}
+
 static void ClearBackbufferTransparent() {
     InternalScope s;
     ID3D11Texture2D* bb = nullptr;
@@ -439,6 +527,16 @@ void StereoRenderView(PFN_EngineFn5 orig, void* self, void* a1, void* a2, void* 
     if (!g_cur) XrWaitHostFrame(30);   // start the frame right after the headset publishes fresh poses
     AcquireFrameTarget();
     GetEyeViews(g_framePose, g_frameFov, &g_frameTime);
+    // Menus (Start / inventory) still call RenderView to draw the character preview into an off-screen target.
+    // That is a 2D picture on the flat menu panel: render it once with the game's own camera, no head tracking.
+    if (g_prevNoWorld) {
+        g_monoPass = true; g_monoWroteBB = false;
+        orig(self, nullptr, a1, a2, a3, a4, a5);
+        g_monoPass = false;
+        g_prevNoWorld = !g_monoWroteBB;   // drew the world into the backbuffer: back in the game, stereo from the next frame
+        g_frameHasWorld = false;          // this one frame is still shown on the flat panel
+        return;
+    }
     uint8_t saved[camoff::Size];
     memcpy(saved, cam, sizeof(saved));
     int eyes = S.nativeStereo ? 2 : 1;
@@ -458,12 +556,21 @@ void StereoRenderView(PFN_EngineFn5 orig, void* self, void* a1, void* a2, void* 
     g_eyePass = -1;
     // Menus still call RenderView (e.g. inventory character preview) without drawing the world to the screen.
     g_frameHasWorld = g_eyesRendered[0] && (!S.nativeStereo || g_eyesRendered[1]);
+    g_prevNoWorld = !g_eyeWroteBB[0] && !g_eyeWroteBB[1];
     g_eyeWroteBB[0] = g_eyeWroteBB[1] = false;
 }
 
 void StereoReleaseBackbuffer() { if (g_bbRes) { g_bbRes->Release(); g_bbRes = nullptr; } }
 
 void StereoNoteRenderTargets(UINT n, ID3D11RenderTargetView* const* rtv) {
+    if (g_monoPass && rtv && g_bbRes) {
+        for (UINT i = 0; i < n; ++i) {
+            ID3D11Resource* r = nullptr;
+            if (rtv[i]) rtv[i]->GetResource(&r);
+            if (r) { if (r == g_bbRes) g_monoWroteBB = true; r->Release(); }
+        }
+        return;
+    }
     if (g_eyePass < 0 || !rtv || !g_bbRes) return;
     for (UINT i = 0; i < n; ++i) {
         if (!rtv[i]) continue;
@@ -763,8 +870,8 @@ void StereoBeforePresent(IDXGISwapChain* sc) {
     static int lastMode = -1;
     if ((int)world != lastMode) { lastMode = world; LOGI("stereo: frame mode -> %s", world ? "WORLD (stereo + HUD layer)" : "MENU (flat panel only)"); }
     if (!world) { XrWaitHostFrame(30); AcquireFrameTarget(); }
-    // HUD (or full menu screen) = current backbuffer
-    CopyBackbufferTo(2);
+    // HUD (or full menu screen) = current backbuffer; in the world, without the cinematic letterbox bars
+    if (!(world && VS().hudRemoveLetterbox && CopyHudWithoutLetterbox())) CopyBackbufferTo(2);
     if (const std::wstring* dir = ActiveCaptureDir()) {
         if (g_cur && g_cur->tex) SaveTextureDDS(g_dev, g_ctx, g_cur->tex, DXGI_FORMAT_R8G8B8A8_UNORM, *dir + L"atlas.dds");
     }

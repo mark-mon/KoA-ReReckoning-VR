@@ -31,6 +31,7 @@ void SettingsLoad() {
     s.hudOffsetY = c.GetFloat("hud_offset_y", -0.05f);
     // hud_anchor (world | head); older configs used hud_follow_head = 0 / 1
     s.hudAnchor = Anchor(c, "hud_anchor", c.GetBool("hud_follow_head", false) ? 1 : 0);
+    s.hudRemoveLetterbox = c.GetBool("hud_remove_letterbox", true);
     s.menuDistance = c.GetFloat("menu_distance", 2.0f);
     s.menuWidth = c.GetFloat("menu_width", 2.4f);
     s.panel.distance = c.GetFloat("settings_distance", 1.0f);

@@ -112,6 +112,8 @@ static const char kDefaultConfig[] =
 "# world = HUD fixed in space in front of the recentre point, head = HUD follows your head\n"
 "# (in game: hold Back/View + click the left stick to switch)\n"
 "hud_anchor = world\n"
+"# 1 = hide the black bars the game draws above and below cut-scenes\n"
+"hud_remove_letterbox = 1\n"
 "# Menus / cutscene screens panel (shown instead of the world when the game is in a full-screen menu)\n"
 "menu_distance = 2.0\n"
 "menu_width = 2.4\n"

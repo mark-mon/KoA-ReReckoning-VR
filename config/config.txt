@@ -48,6 +48,8 @@ hud_offset_y = -0.05
 # world = HUD fixed in space in front of the recentre point, head = HUD follows your head
 # (in game: hold Back/View + click the left stick to switch)
 hud_anchor = world
+# 1 = hide the black bars the game draws above and below cut-scenes
+hud_remove_letterbox = 1
 # Menus / cutscene screens panel (shown instead of the world when the game is in a full-screen menu)
 menu_distance = 2.0
 menu_width = 2.4

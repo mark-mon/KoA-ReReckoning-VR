@@ -99,6 +99,8 @@ void Register() {
         "World: fixed in space in front of the recentre point (Recentre moves it).\nHead: follows your head.\nAlso: hold Back/View + click the left stick.",
         [] { VS().hudAnchor = g_hudAnchorStr == "head" ? 1 : 0; Push(); });
     ha.choiceLabels = {"World (fixed in space)", "Head (follows)"};
+    o.AddBool("HUD", "hud_remove_letterbox", "Hide cinematic bars", &s.hudRemoveLetterbox,
+              "Remove the black bars the game draws above and below cut-scenes.");
     o.AddFloat("HUD", "menu_distance", "Game menus: distance (m)", &s.menuDistance, 0.5f, 6.0f, 0.05f, 2,
                "Distance of the large panel used for the game's own menus and loading screens.", Push);
     o.AddFloat("HUD", "menu_width", "Game menus: width (m)", &s.menuWidth, 0.5f, 6.0f, 0.05f, 2,

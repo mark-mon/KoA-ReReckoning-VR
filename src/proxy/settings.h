@@ -21,6 +21,7 @@ struct VrSettings {
     // HUD panel
     float hudDistance = 1.6f, hudWidth = 1.6f, hudOffsetY = -0.05f;
     int hudAnchor = 0;                 // 0 = World, 1 = Head
+    bool hudRemoveLetterbox = true;    // hide the black bars the game draws over cinematics
     // Panel for the game's own full-screen menus
     float menuDistance = 2.0f, menuWidth = 2.4f;
     // Settings menu panel (vrkit)
